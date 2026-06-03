@@ -384,31 +384,44 @@ type resourceLink struct {
 	Size int    `json:"size"`
 }
 
+// parseFlexibleDate attempts to parse dates in multiple formats commonly returned by SAM.gov.
+func parseFlexibleDate(dateStr string) (time.Time, error) {
+	if dateStr == "" {
+		return time.Time{}, nil // Return zero time for empty dates
+	}
+
+	// Try formats in order of specificity
+	formats := []string{
+		time.RFC3339,           // "2006-01-02T15:04:05Z07:00"
+		"2006-01-02T15:04:05",  // "2026-06-01T18:00:00" (no timezone)
+		"2006-01-02",           // "2026-06-01" (date only)
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, dateStr); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse date: %s", dateStr)
+}
+
 // transformOpportunity converts SAM.gov API opportunityData to internal Opportunity struct.
 func transformOpportunity(data *opportunityData) (*opportunity.Opportunity, error) {
 	now := time.Now().UTC()
 
 	// Parse posted date
-	postedDate, err := time.Parse(time.RFC3339, data.PostedDate)
+	postedDate, err := parseFlexibleDate(data.PostedDate)
 	if err != nil {
-		// Try alternative date format (YYYY-MM-DD)
-		postedDate, err = time.Parse("2006-01-02", data.PostedDate)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse posted date %q: %w", data.PostedDate, err)
-		}
+		// Log warning but continue with zero time - don't fail the entire opportunity
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse posted date for opportunity %s: %v\n", data.NoticeID, err)
 	}
 
 	// Parse response deadline
-	var responseDeadline time.Time
-	if data.ResponseDeadLine != "" {
-		responseDeadline, err = time.Parse(time.RFC3339, data.ResponseDeadLine)
-		if err != nil {
-			// Try alternative format
-			responseDeadline, err = time.Parse("2006-01-02T15:04:05-07:00", data.ResponseDeadLine)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse response deadline %q: %w", data.ResponseDeadLine, err)
-			}
-		}
+	responseDeadline, err := parseFlexibleDate(data.ResponseDeadLine)
+	if err != nil {
+		// Log warning but continue with zero time - don't fail the entire opportunity
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse response deadline for opportunity %s: %v\n", data.NoticeID, err)
 	}
 
 	// Build place of performance string
