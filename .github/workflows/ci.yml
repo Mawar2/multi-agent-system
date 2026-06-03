@@ -175,3 +175,108 @@ jobs:
         fi
 
         echo "✓ All required checks passed!"
+
+  # Manual deployment to GCP (Phase 1+)
+  # Requires manual approval via GitHub environment
+  deploy-to-gcp:
+    name: Deploy to GCP
+    runs-on: ubuntu-latest
+    needs: [all-checks-pass]
+    # Only run on main branch, after all checks pass
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://console.cloud.google.com/run?project=kaimi-seeker
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Configure Docker for GCR
+      run: |
+        gcloud auth configure-docker us-east4-docker.pkg.dev
+
+    # Phase 0: Placeholder deployment
+    # Phase 1+: Uncomment the sections below to deploy Hunter to Cloud Run
+    - name: Phase 0 - Deployment Placeholder
+      run: |
+        echo "========================================="
+        echo "GCP Deployment - Phase 0"
+        echo "========================================="
+        echo ""
+        echo "This job is configured but not yet deploying."
+        echo "Phase 0 has no cloud infrastructure to deploy."
+        echo ""
+        echo "When Phase 1 begins, uncomment the steps below to:"
+        echo "  1. Build Hunter Docker image"
+        echo "  2. Push to Google Container Registry"
+        echo "  3. Deploy to Cloud Run"
+        echo "  4. Configure Cloud Scheduler for daily runs"
+        echo ""
+        echo "Project: ${{ secrets.GCP_PROJECT_ID }}"
+        echo "Region: ${{ secrets.GCP_REGION }}"
+        echo "Status: Ready for Phase 1 deployment"
+        echo "========================================="
+
+    # PHASE 1: Uncomment these steps when ready to deploy
+
+    # - name: Build Hunter Docker image
+    #   run: |
+    #     docker build \
+    #       -t us-east4-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kaimi/hunter:${{ github.sha }} \
+    #       -t us-east4-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kaimi/hunter:latest \
+    #       -f cmd/hunter/Dockerfile .
+
+    # - name: Push to Google Container Registry
+    #   run: |
+    #     docker push us-east4-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kaimi/hunter:${{ github.sha }}
+    #     docker push us-east4-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kaimi/hunter:latest
+
+    # - name: Deploy Hunter to Cloud Run
+    #   run: |
+    #     gcloud run deploy hunter \
+    #       --image us-east4-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/kaimi/hunter:${{ github.sha }} \
+    #       --region ${{ secrets.GCP_REGION }} \
+    #       --platform managed \
+    #       --allow-unauthenticated \
+    #       --set-env-vars GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }} \
+    #       --set-env-vars GCP_REGION=${{ secrets.GCP_REGION }} \
+    #       --set-secrets SAMGOV_API_KEY=samgov-api-key:latest \
+    #       --memory 512Mi \
+    #       --cpu 1 \
+    #       --timeout 300s \
+    #       --max-instances 10
+
+    # - name: Get Cloud Run URL
+    #   id: get-url
+    #   run: |
+    #     URL=$(gcloud run services describe hunter \
+    #       --region ${{ secrets.GCP_REGION }} \
+    #       --format 'value(status.url)')
+    #     echo "url=$URL" >> $GITHUB_OUTPUT
+    #     echo "Hunter deployed to: $URL"
+
+    # - name: Configure Cloud Scheduler (Phase 1)
+    #   run: |
+    #     # Create or update Cloud Scheduler job to run Hunter daily
+    #     gcloud scheduler jobs create http hunter-daily \
+    #       --location ${{ secrets.GCP_REGION }} \
+    #       --schedule "0 9 * * *" \
+    #       --uri "${{ steps.get-url.outputs.url }}/run" \
+    #       --http-method POST \
+    #       --oidc-service-account-email kaimi-dev@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+    #       --oidc-token-audience "${{ steps.get-url.outputs.url }}" \
+    #       || gcloud scheduler jobs update http hunter-daily \
+    #       --location ${{ secrets.GCP_REGION }} \
+    #       --schedule "0 9 * * *" \
+    #       --uri "${{ steps.get-url.outputs.url }}/run"
