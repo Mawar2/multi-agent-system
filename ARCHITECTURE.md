@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — BlueMeta Pulse
+# ARCHITECTURE.md — Kaimi
 
 > **Read this before building anything.** This document gives you the full system
 > context so your choices stay forward-compatible. **You are only building Phase 0
@@ -9,8 +9,8 @@
 
 ## What this is
 
-**Product name: BlueMeta Pulse** — the steady daily heartbeat of the BD pipeline
-(the Hunter pulling fresh opportunities every day, the system's ongoing cadence).
+**Product name: Kaimi** — Hawaiian for "the seeker." An autonomous agent that
+seeks and qualifies federal opportunities, tirelessly hunting for the right contracts.
 
 An autonomous business-development pipeline for federal government contracting. It
 hunts live federal opportunities on SAM.gov, scores them bid/no-bid against a
