@@ -142,22 +142,37 @@ Create a `.env` file in the project root for local development:
 cp .env.example .env
 ```
 
-Then edit `.env` and add your API keys:
+#### Option 1: Retrieve API Keys from Secret Manager (Recommended)
+
+You can fetch API keys directly from GCP Secret Manager:
 
 ```bash
-# SAM.gov API Key (already configured in Secret Manager)
-SAM_API_KEY=your-sam-api-key-here
+# SAM.gov API Key
+gcloud secrets versions access latest --secret=samgov-api-key
 
-# Google AI Studio API Key (for Gemini agent platform - ADK Go)
-# Get yours at: https://aistudio.google.com/apikey
-# OR ask the team lead for the shared key
-GOOGLE_AI_STUDIO_API_KEY=your-ai-studio-api-key-here
+# Google AI Studio API Key (for ADK Go)
+gcloud secrets versions access latest --secret=google-ai-studio-api-key
 ```
+
+Add them to your `.env` file:
+
+```bash
+# SAM.gov API Key
+SAM_API_KEY=$(gcloud secrets versions access latest --secret=samgov-api-key)
+
+# Google AI Studio API Key
+GOOGLE_API_KEY=$(gcloud secrets versions access latest --secret=google-ai-studio-api-key)
+```
+
+Or manually copy the output and paste into your `.env` file.
+
+#### Option 2: Get API Keys from Team Lead
+
+If you don't have Secret Manager access, contact the team lead (Malik) for the API keys.
 
 **Important:**
 - The `.env` file is in `.gitignore` and will NOT be committed
 - Never commit API keys to the repository
-- For the AI Studio API key, contact the team lead (Malik) for the shared team key
 
 ### GCP Authentication Options
 
