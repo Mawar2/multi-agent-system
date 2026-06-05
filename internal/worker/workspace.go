@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
@@ -13,13 +14,16 @@ import (
 // WorkspaceManager manages isolated working directories for target repositories.
 // Each project gets cloned into its own workspace to avoid git context confusion.
 type WorkspaceManager struct {
-	rootDir string // e.g., "./workspaces"
+	rootDir   string                 // e.g., "./workspaces" or "./projects"
+	repoLocks map[string]*sync.Mutex // Per-repo locks (key: "owner/repo")
+	locksMu   sync.RWMutex           // Protects repoLocks map itself
 }
 
 // NewWorkspaceManager creates a new workspace manager.
 func NewWorkspaceManager(rootDir string) *WorkspaceManager {
 	return &WorkspaceManager{
-		rootDir: rootDir,
+		rootDir:   rootDir,
+		repoLocks: make(map[string]*sync.Mutex),
 	}
 }
 
@@ -29,6 +33,12 @@ func NewWorkspaceManager(rootDir string) *WorkspaceManager {
 //
 // Returns the absolute path to the workspace directory.
 func (wm *WorkspaceManager) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	// Acquire per-repository lock to prevent concurrent clone/pull operations
+	lock := wm.getRepoLock(task.RepoOwner, task.RepoName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Now only ONE worker can prepare this specific repo at a time
 	// Workspace path: workspaces/owner/repo
 	workspaceDir := filepath.Join(wm.rootDir, task.RepoOwner, task.RepoName)
 
@@ -104,6 +114,35 @@ func (wm *WorkspaceManager) pullLatest(ctx context.Context, workspaceDir string)
 
 	fmt.Printf("[WorkspaceManager] Pulled latest changes for %s\n", workspaceDir)
 	return nil
+}
+
+// getRepoLock returns the mutex for a specific repository, creating it if needed.
+// Thread-safe: uses locksMu to protect the repoLocks map.
+func (wm *WorkspaceManager) getRepoLock(owner, repo string) *sync.Mutex {
+	key := fmt.Sprintf("%s/%s", owner, repo)
+
+	// Fast path: try to get existing lock with read lock
+	wm.locksMu.RLock()
+	lock, exists := wm.repoLocks[key]
+	wm.locksMu.RUnlock()
+
+	if exists {
+		return lock
+	}
+
+	// Slow path: create new lock with write lock
+	wm.locksMu.Lock()
+	defer wm.locksMu.Unlock()
+
+	// Double-check: another goroutine may have created it
+	if lock, exists := wm.repoLocks[key]; exists {
+		return lock
+	}
+
+	// Create new lock for this repo
+	lock = &sync.Mutex{}
+	wm.repoLocks[key] = lock
+	return lock
 }
 
 // CleanWorkspace removes a workspace directory (useful for cleanup).
