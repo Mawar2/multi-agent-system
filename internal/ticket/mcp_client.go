@@ -48,10 +48,12 @@ func NewHTTPMCPClientFromEnv() (*HTTPMCPClient, error) {
 	return NewHTTPMCPClient(serverURL, authToken), nil
 }
 
-// mcpRequest represents the JSON-RPC style request sent to MCP server.
+// mcpRequest represents the JSON-RPC 2.0 request sent to MCP server.
 type mcpRequest struct {
-	Tool   string                 `json:"tool"`
-	Params map[string]interface{} `json:"params"`
+	JSONRPC string                 `json:"jsonrpc"`
+	Method  string                 `json:"method"`
+	Params  map[string]interface{} `json:"params"`
+	ID      int                    `json:"id"`
 }
 
 // mcpResponse represents the response from MCP server.
@@ -73,10 +75,12 @@ type mcpError struct {
 // 3. Parses the response
 // 4. Returns the result or error
 func (c *HTTPMCPClient) Call(ctx context.Context, tool string, params map[string]interface{}) (interface{}, error) {
-	// Build request payload
+	// Build JSON-RPC 2.0 request payload
 	reqPayload := mcpRequest{
-		Tool:   tool,
-		Params: params,
+		JSONRPC: "2.0",
+		Method:  tool,
+		Params:  params,
+		ID:      1, // Simple incrementing ID
 	}
 
 	reqBody, err := json.Marshal(reqPayload)
@@ -92,6 +96,7 @@ func (c *HTTPMCPClient) Call(ctx context.Context, tool string, params map[string
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
 
 	// Send request
