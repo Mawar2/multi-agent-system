@@ -161,9 +161,11 @@ func (c *GitHubRESTClient) getIssue(ctx context.Context, params map[string]inter
 }
 
 // searchPullRequests searches for pull requests using GitHub REST API.
+// Filters PRs that reference a specific issue number in title or body.
 func (c *GitHubRESTClient) searchPullRequests(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	owner, _ := params["owner"].(string)
 	repo, _ := params["repo"].(string)
+	query, _ := params["query"].(string)
 
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
@@ -213,10 +215,60 @@ func (c *GitHubRESTClient) searchPullRequests(ctx context.Context, params map[st
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Simple filtering: if query is provided, filter PRs
-	// For now, just return all PRs (client handles filtering)
+	// Filter PRs based on query (e.g., "repo:owner/repo is:pr #47")
+	// Extract issue number from query (format: "#<number>")
+	filteredPRs := make([]map[string]interface{}, 0)
+	if query != "" {
+		// Simple extraction: find "#<number>" in query
+		issueRef := ""
+		for i := 0; i < len(query); i++ {
+			if query[i] == '#' {
+				// Extract the number after #
+				j := i + 1
+				for j < len(query) && query[j] >= '0' && query[j] <= '9' {
+					j++
+				}
+				if j > i+1 {
+					issueRef = query[i:j] // e.g., "#47"
+					break
+				}
+			}
+		}
+
+		// Filter PRs that mention this issue reference in title or body
+		if issueRef != "" {
+			for _, pr := range prs {
+				title, _ := pr["title"].(string)
+				body, _ := pr["body"].(string)
+
+				// Check if title or body contains the issue reference
+				if containsSubstring(title, issueRef) || containsSubstring(body, issueRef) {
+					filteredPRs = append(filteredPRs, pr)
+				}
+			}
+		}
+	} else {
+		filteredPRs = prs
+	}
+
 	// Wrap in items structure expected by client
 	return map[string]interface{}{
-		"items": prs,
+		"items": filteredPRs,
 	}, nil
+}
+
+// containsSubstring checks if s contains substr (case-sensitive).
+func containsSubstring(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	if len(s) < len(substr) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
