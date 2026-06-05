@@ -23,7 +23,8 @@ type ClaudeCodeWorker struct {
 	tier            taskqueue.Tier       // Worker tier (determines which tasks to claim)
 	queue           taskqueue.TaskQueue  // Queue to claim tasks from
 	backend         llm.LLMBackend       // LLM backend for code generation
-	projectRootPath string               // Root directory where projects are checked out
+	workspaceRoot   string               // Root directory for isolated workspaces
+	workspaceMgr    *WorkspaceManager    // Manages cloning and updating target repos
 	tasksCompleted  int                  // Number of tasks successfully completed
 	tasksFailed     int                  // Number of tasks failed
 	mu              sync.Mutex           // Protects stats (tasksCompleted, tasksFailed)
@@ -36,7 +37,7 @@ type ClaudeCodeWorker struct {
 //   - tier: Which tier this worker operates in (TierClaude, TierGeminiPro, TierGeminiFlash)
 //   - queue: TaskQueue to claim tasks from
 //   - backend: LLMBackend for executing prompts
-//   - projectRoot: Absolute path to directory where projects are checked out
+//   - workspaceRoot: Absolute path to root directory for isolated workspaces (e.g., "./workspaces")
 //
 // Returns a configured worker ready to claim and execute tasks.
 func NewClaudeCodeWorker(
@@ -44,16 +45,17 @@ func NewClaudeCodeWorker(
 	tier taskqueue.Tier,
 	queue taskqueue.TaskQueue,
 	backend llm.LLMBackend,
-	projectRoot string,
+	workspaceRoot string,
 ) *ClaudeCodeWorker {
 	return &ClaudeCodeWorker{
-		id:              id,
-		tier:            tier,
-		queue:           queue,
-		backend:         backend,
-		projectRootPath: projectRoot,
-		tasksCompleted:  0,
-		tasksFailed:     0,
+		id:            id,
+		tier:          tier,
+		queue:         queue,
+		backend:       backend,
+		workspaceRoot: workspaceRoot,
+		workspaceMgr:  NewWorkspaceManager(workspaceRoot),
+		tasksCompleted: 0,
+		tasksFailed:    0,
 	}
 }
 
@@ -78,12 +80,13 @@ func (w *ClaudeCodeWorker) Claim(ctx context.Context) (*taskqueue.Task, error) {
 // Execute performs the work for a claimed task.
 //
 // Steps:
-//  1. Parse project conventions (CLAUDE.md, CONVENTIONS.md)
-//  2. Build detailed LLM prompt with task details and conventions
-//  3. Call backend.Execute to get implementation from LLM
-//  4. Parse response for branch name and PR number
-//  5. Update task status to Review
-//  6. Return Result with success status
+//  1. Prepare workspace (clone or pull target repository)
+//  2. Parse project conventions (CLAUDE.md, CONVENTIONS.md)
+//  3. Build detailed LLM prompt with task details and conventions
+//  4. Call backend.Execute to get implementation from LLM (runs in workspace)
+//  5. Parse response for branch name and PR number
+//  6. Update task status to Review
+//  7. Return Result with success status
 //
 // If any step fails, returns a Result with success=false and error details.
 func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*Result, error) {
@@ -94,17 +97,23 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 		return w.failResult(task, fmt.Errorf("failed to update task status: %w", err)), nil
 	}
 
-	// Step 1: Parse project conventions
-	projectPath := fmt.Sprintf("%s/%s/%s", w.projectRootPath, task.RepoOwner, task.RepoName)
-	ruleset, err := conventions.ParseConventions(projectPath)
+	// Step 1: Prepare workspace (clone or update target repo)
+	workspaceDir, err := w.workspaceMgr.PrepareWorkspace(ctx, task)
+	if err != nil {
+		return w.failResult(task, fmt.Errorf("failed to prepare workspace: %w", err)), nil
+	}
+	fmt.Printf("[Worker %s] Using workspace: %s\n", w.id, workspaceDir)
+
+	// Step 2: Parse project conventions from workspace
+	ruleset, err := conventions.ParseConventions(workspaceDir)
 	if err != nil {
 		return w.failResult(task, fmt.Errorf("failed to parse conventions: %w", err)), nil
 	}
 
-	// Step 2: Build LLM prompt
+	// Step 3: Build LLM prompt
 	prompt := w.buildPrompt(task, ruleset)
 
-	// Step 3: Execute LLM call
+	// Step 4: Execute LLM call in workspace directory
 	// For Phase 1, we use the first available model from the backend
 	models := w.backend.Models()
 	if len(models) == 0 {
@@ -112,7 +121,8 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 	}
 	model := models[0]
 
-	response, err := w.backend.Execute(ctx, prompt, model)
+	// Execute in workspace directory so git operations use correct repo context
+	response, err := w.backend.ExecuteInDir(ctx, prompt, model, workspaceDir)
 	if err != nil {
 		return w.failResult(task, fmt.Errorf("LLM execution failed: %w", err)), nil
 	}

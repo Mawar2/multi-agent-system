@@ -1,9 +1,10 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"strings"
+	"os/exec"
 )
 
 // ClaudeCodeBackend implements the LLMBackend interface using Claude Code CLI
@@ -106,34 +107,69 @@ func (b *ClaudeCodeBackend) Execute(ctx context.Context, prompt string, model st
 	//
 	// These will be added in Phase 2 as part of the full supervisor implementation.
 
-	// For now, return a simple success message indicating the task would be executed
-	// In production, this would spawn a Claude Code agent via Task tool
-	
-	// Try to extract issue number from prompt
-	issueNum := "mock"
-	if idx := strings.Index(prompt, "**Issue #"); idx >= 0 {
-		rest := prompt[idx+len("**Issue #"):]
-		if endIdx := strings.Index(rest, ":**"); endIdx >= 0 {
-			issueNum = strings.TrimSpace(rest[:endIdx])
-		}
+	// Call the directory-aware version with no working directory
+	return b.ExecuteInDir(ctx, prompt, model, "")
+}
+
+// ExecuteInDir executes Claude Code CLI in a specific working directory.
+// This ensures git operations happen in the correct repository context.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - prompt: The task prompt to send to Claude
+//   - model: The Claude model to use ("claude-sonnet-4.5" or "claude-opus-4.6")
+//   - workDir: Absolute path to working directory (where target repo is cloned)
+//
+// If workDir is empty, uses current directory.
+//
+// Returns the Claude CLI output or an error if execution fails.
+func (b *ClaudeCodeBackend) ExecuteInDir(ctx context.Context, prompt string, model string, workDir string) (string, error) {
+	if prompt == "" {
+		return "", fmt.Errorf("execute: prompt cannot be empty")
 	}
 
-	response := fmt.Sprintf(`Task received and would be executed with %s.
+	if model == "" {
+		model = "claude-sonnet-4.5" // Default to Sonnet for speed
+	}
 
-Prompt: %s
+	// Validate that the requested model is supported
+	if !b.supportsModel(model) {
+		return "", fmt.Errorf("execute: unsupported model %q (supported: %v)", model, b.models)
+	}
 
-Next steps for full implementation:
-1. Spawn Claude Code agent via Task tool
-2. Agent reads project conventions
-3. Agent implements the solution
-4. Agent creates branch and PR
-5. Returns results to supervisor
+	// Convert model alias for CLI
+	modelAlias := model
+	switch model {
+	case "claude-sonnet-4.5", "claude-sonnet-4-5":
+		modelAlias = "sonnet"
+	case "claude-opus-4.6", "claude-opus-4-6":
+		modelAlias = "opus"
+	}
 
-Branch: feature/KAI-M%s-mock-branch
-PR: #%s
+	// Spawn Claude Code subprocess with --print for non-interactive output
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--model", modelAlias)
 
-For now, this is a successful placeholder - the routing and task claiming works!
-`, model, prompt, issueNum, issueNum)
+	// Set working directory if specified
+	if workDir != "" {
+		cmd.Dir = workDir
+		fmt.Printf("[ClaudeCodeBackend] Executing in directory: %s\n", workDir)
+	}
+
+	// Pass prompt via stdin
+	cmd.Stdin = bytes.NewBufferString(prompt)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("execute: claude CLI failed: %w\nStderr: %s", err, stderr.String())
+	}
+
+	response := stdout.String()
+	if response == "" {
+		return "", fmt.Errorf("execute: claude returned empty response")
+	}
 
 	return response, nil
 }

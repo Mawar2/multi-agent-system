@@ -10,6 +10,10 @@ type LLMBackend interface {
 	// The model parameter specifies which model to use (e.g., "claude-sonnet-4.5", "gemini-flash-3.5").
 	Execute(ctx context.Context, prompt string, model string) (string, error)
 
+	// ExecuteInDir sends a prompt to the LLM and executes in the specified working directory.
+	// This is critical for ensuring git operations happen in the correct repository context.
+	ExecuteInDir(ctx context.Context, prompt string, model string, workDir string) (string, error)
+
 	// Name returns the backend name (e.g., "claude-code-cli", "antigravity", "vertex-ai").
 	Name() string
 
