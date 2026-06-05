@@ -1,0 +1,30 @@
+# Task queue (runtime data)
+tasks/
+*.json
+
+# Workspaces (cloned target repos)
+workspaces/
+
+# Build artifacts
+supervisor.exe
+bin/
+*.exe
+
+# Go build cache
+*.test
+*.out
+coverage.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+orchestrator.yml  # User-specific config (not in repo)
