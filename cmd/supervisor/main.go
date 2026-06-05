@@ -41,18 +41,13 @@ func main() {
 	fmt.Println("Initializing task router...")
 	router := orchestrator.NewRuleBasedRouter()
 
-	// Initialize MCP client for GitHub
-	fmt.Println("Initializing GitHub MCP client...")
-	mcpClient, err := ticket.NewHTTPMCPClientFromEnv()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating MCP client: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please set GITHUB_TOKEN environment variable\n")
-		os.Exit(1)
-	}
+	// Initialize GitHub REST client (uses gh CLI)
+	fmt.Println("Initializing GitHub REST client...")
+	restClient := ticket.NewGitHubRESTClient()
 
 	// Initialize ticket client
 	fmt.Println("Initializing GitHub ticket client...")
-	ticketClient := ticket.NewGitHubClient(mcpClient)
+	ticketClient := ticket.NewGitHubClient(restClient)
 
 	// Initialize supervisor
 	fmt.Println("Initializing supervisor...")

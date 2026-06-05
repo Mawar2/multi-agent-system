@@ -28,3 +28,4 @@ Thumbs.db
 # Environment
 .env
 orchestrator.yml  # User-specific config (not in repo)
+projects/
