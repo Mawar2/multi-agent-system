@@ -40,6 +40,81 @@
 
 ---
 
+## ✅ Fixed: Per-Worker Workspace Isolation
+
+### Problem (Previously)
+Workers shared the same workspace directory after clone/pull, causing conflicts when working on different issues from the same repository:
+
+**Test conflicts:**
+```
+Worker 1: ./projects/Mawar2/Kaimi/ → checkout feature/issue-47 → run tests
+Worker 2: ./projects/Mawar2/Kaimi/ → checkout feature/issue-46 → tests conflict with Worker 1!
+Worker 3: ./projects/Mawar2/Kaimi/ → checkout feature/issue-44 → conflicts!
+```
+
+**Linter conflicts:**
+- Multiple workers running linter → lock file conflicts
+- Cache directories interfere with each other
+
+**Build conflicts:**
+- Compiled artifacts from different workers overlap
+- Race conditions in build output
+
+**User's Question:**
+> "Is it possible for each of these agents to have their own branches to work within at the same time? For example if 4 PRs get feedback at the same time... we would have different agents working on them..."
+
+### Solution (Implemented ✅)
+Gave each worker its own isolated workspace directory:
+
+```
+projects/
+├── gemini-flash-1/Mawar2/Kaimi/  ← Worker 1 private workspace
+├── gemini-flash-2/Mawar2/Kaimi/  ← Worker 2 private workspace
+├── gemini-flash-3/Mawar2/Kaimi/  ← Worker 3 private workspace
+├── gemini-flash-4/Mawar2/Kaimi/
+├── gemini-flash-5/Mawar2/Kaimi/
+├── gemini-pro-1/Mawar2/Kaimi/
+├── gemini-pro-2/Mawar2/Kaimi/
+├── gemini-pro-3/Mawar2/Kaimi/
+├── claude-1/Mawar2/Kaimi/
+└── claude-2/Mawar2/Kaimi/
+```
+
+**Implementation:**
+```go
+type WorkspaceManager struct {
+    rootDir   string                 // Base root: "./projects"
+    workerID  string                 // Worker ID: "gemini-flash-1"
+    repoLocks map[string]*sync.Mutex // Per-worker-repo locks
+    locksMu   sync.RWMutex
+}
+
+func (wm *WorkspaceManager) PrepareWorkspace(...) (string, error) {
+    // NEW: {rootDir}/{workerID}/{owner}/{repo}
+    workspaceDir := filepath.Join(wm.rootDir, wm.workerID, task.RepoOwner, task.RepoName)
+    // Result: ./projects/gemini-flash-1/Mawar2/Kaimi
+
+    // Per-worker-repo lock (enables true parallelism)
+    lock := wm.getRepoLock(task.RepoOwner, task.RepoName)
+    // Lock key: "gemini-flash-1/Mawar2/Kaimi" (unique per worker)
+}
+```
+
+**Benefits:**
+- ✅ True parallel execution (workers don't block each other)
+- ✅ Zero test/linter/build conflicts
+- ✅ Enables handling multiple PRs with feedback simultaneously
+- ✅ Each worker has completely isolated environment
+
+**Trade-off:**
+- Disk overhead: 10 workers × ~200MB = ~2GB (acceptable)
+
+**Commit:** `3cd2649` - "Implement per-worker workspace isolation"
+
+**Status:** ✅ Implemented and ready for testing
+
+---
+
 ## ✅ Fixed: Workspace Concurrency
 
 ### Problem (Previously)
