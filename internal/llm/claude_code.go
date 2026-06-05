@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // ClaudeCodeBackend implements the LLMBackend interface using Claude Code CLI
@@ -107,6 +108,16 @@ func (b *ClaudeCodeBackend) Execute(ctx context.Context, prompt string, model st
 
 	// For now, return a simple success message indicating the task would be executed
 	// In production, this would spawn a Claude Code agent via Task tool
+	
+	// Try to extract issue number from prompt
+	issueNum := "mock"
+	if idx := strings.Index(prompt, "**Issue #"); idx >= 0 {
+		rest := prompt[idx+len("**Issue #"):]
+		if endIdx := strings.Index(rest, ":**"); endIdx >= 0 {
+			issueNum = strings.TrimSpace(rest[:endIdx])
+		}
+	}
+
 	response := fmt.Sprintf(`Task received and would be executed with %s.
 
 Prompt: %s
@@ -118,8 +129,11 @@ Next steps for full implementation:
 4. Agent creates branch and PR
 5. Returns results to supervisor
 
+Branch: feature/KAI-M%s-mock-branch
+PR: #%s
+
 For now, this is a successful placeholder - the routing and task claiming works!
-`, model, prompt)
+`, model, prompt, issueNum, issueNum)
 
 	return response, nil
 }
