@@ -91,8 +91,8 @@ func TestHTTPMCPClient_Call_Success(t *testing.T) {
 		}
 
 		// Verify request content
-		if req.Tool != "mcp__github__list_issues" {
-			t.Errorf("expected tool 'mcp__github__list_issues', got %s", req.Tool)
+		if req.Method != "mcp__github__list_issues" {
+			t.Errorf("expected tool 'mcp__github__list_issues', got %s", req.Method)
 		}
 
 		// Send success response

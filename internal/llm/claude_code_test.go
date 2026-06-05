@@ -89,7 +89,7 @@ func TestClaudeCodeBackend_Execute_UnsupportedModel(t *testing.T) {
 	}
 }
 
-// TestClaudeCodeBackend_Execute_DefaultModel verifies default model selection.
+// TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel verifies default model selection.
 func TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel(t *testing.T) {
 	backend := NewClaudeCodeBackend()
 	ctx := context.Background()
@@ -97,15 +97,14 @@ func TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel(t *testing.T) {
 
 	// Empty model should use default (claude-sonnet-4.5)
 	// which should not cause an unsupported model error
-	_, err := backend.Execute(ctx, prompt, "")
+	result, err := backend.Execute(ctx, prompt, "")
 
-	if err == nil {
-		t.Error("Execute expected Phase 1 placeholder error, got nil")
+	if err != nil {
+		t.Fatalf("Execute unexpected error: %v", err)
 	}
 
-	// Should be Phase 1 placeholder error, not unsupported model error
-	if err.Error() != "execute: Claude Code CLI Task tool integration not yet implemented (Phase 1 placeholder)" {
-		t.Errorf("Execute error = %q", err.Error())
+	if result == "" {
+		t.Error("Execute result is empty")
 	}
 }
 
@@ -117,19 +116,13 @@ func TestClaudeCodeBackend_Execute_ValidModel_Phase1Placeholder(t *testing.T) {
 
 	result, err := backend.Execute(ctx, prompt, "claude-sonnet-4.5")
 
-	// Phase 1: Expected to return placeholder error
-	if err == nil {
-		t.Error("Execute expected Phase 1 placeholder error, got nil")
+	if err != nil {
+		t.Fatalf("Execute unexpected error: %v", err)
 	}
 
-	expectedErrMsg := "execute: Claude Code CLI Task tool integration not yet implemented (Phase 1 placeholder)"
-	if err.Error() != expectedErrMsg {
-		t.Errorf("Execute error = %q, want %q", err.Error(), expectedErrMsg)
-	}
-
-	// Result should be empty in Phase 1
-	if result != "" {
-		t.Errorf("Execute result should be empty in Phase 1, got %q", result)
+	// Result should not be empty
+	if result == "" {
+		t.Error("Execute result should not be empty in Phase 1")
 	}
 }
 
@@ -139,16 +132,15 @@ func TestClaudeCodeBackend_Execute_ComplexModel(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Design the Zone 2 orchestration architecture"
 
-	// Using Opus (complex reasoning model) should still hit Phase 1 placeholder
-	_, err := backend.Execute(ctx, prompt, "claude-opus-4.6")
+	// Using Opus (complex reasoning model) should still work and return placeholder response
+	result, err := backend.Execute(ctx, prompt, "claude-opus-4.6")
 
-	if err == nil {
-		t.Error("Execute expected Phase 1 placeholder error, got nil")
+	if err != nil {
+		t.Fatalf("Execute unexpected error: %v", err)
 	}
 
-	// Should not be an unsupported model error (Opus is supported)
-	if err.Error() != "execute: Claude Code CLI Task tool integration not yet implemented (Phase 1 placeholder)" {
-		t.Errorf("Execute error = %q", err.Error())
+	if result == "" {
+		t.Error("Execute result is empty")
 	}
 }
 
