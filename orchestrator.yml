@@ -1,0 +1,59 @@
+# Multi-Agent Orchestration System Configuration
+# Copy this to orchestrator.yml and customize for your projects
+
+projects:
+  - name: kaimi
+    repo_owner: Mawar2
+    repo_name: Kaimi
+    conventions_path: ./CLAUDE.md
+    branch_pattern: "feature/KAI-{ticket}-{summary}"
+    commit_pattern: "{ticket}_{description}"
+    labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
+
+  # Add more projects as needed
+  # - name: other-project
+  #   repo_owner: YourOrg
+  #   repo_name: YourRepo
+  #   conventions_path: ./PROJECT_RULES.md
+  #   branch_pattern: "{ticket}-{summary}"
+  #   commit_pattern: "[{ticket}] {description}"
+
+worker_tiers:
+  gemini_flash:
+    max_workers: 5
+    model: gemini-flash-3.5
+
+  gemini_pro:
+    max_workers: 3
+    model: gemini-pro-3.5
+
+  claude:
+    max_workers: 2
+    model: claude-sonnet-4.5
+
+# Fallback chains for quota failover (in priority order).
+# When a model hits its quota limit the router walks this chain to find the
+# next available tier.  See internal/orchestrator/fallback_router.go.
+fallback_chains:
+  gemini-flash:
+    - gemini-pro      # Flash exhausted → try Pro
+    - claude          # Pro also exhausted → try Claude Sonnet
+  gemini-pro:
+    - claude          # Pro exhausted → try Claude Sonnet
+    - gemini-flash    # Claude also exhausted → downgrade to Flash
+  claude:
+    - claude-opus     # Sonnet exhausted → try Opus (more expensive)
+    - gemini-pro      # Opus also exhausted → fall back to Gemini Pro
+
+# Quota reset windows — how long to wait before retrying an exhausted model.
+quota_reset:
+  gemini-flash: 1h
+  gemini-pro: 1h
+  claude: 5m       # Claude rate limits reset faster than Gemini quotas
+  claude-opus: 5m
+
+# Supervisor settings
+poll_interval_seconds: 60    # How often to check for new GitHub Issues
+task_timeout_minutes: 120     # Max time a worker can spend on a task
+max_retry_attempts: 3         # Max retries before marking task as failed
+task_queue_dir: ./tasks       # Directory for JSON queue files
