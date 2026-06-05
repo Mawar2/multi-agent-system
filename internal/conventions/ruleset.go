@@ -40,6 +40,11 @@ type Ruleset struct {
 	// Empty string means no format command specified.
 	FormatCommand string
 
+	// BuildCommand is the command to build the project (optional).
+	// Example: "make build" or "go build ./..."
+	// Empty string means no build command (build check will be skipped).
+	BuildCommand string
+
 	// TDDRequired indicates whether test-driven development is required.
 	// When true, tests must be written before implementation code.
 	TDDRequired bool
@@ -62,6 +67,7 @@ func NewRuleset(projectPath string) *Ruleset {
 		TestCommand:    "go test ./...",
 		LintCommand:    "golangci-lint run",
 		FormatCommand:  "gofmt -w .",
+		BuildCommand:   "", // Optional - not all projects need explicit build
 		TDDRequired:    false,
 		CustomRules:    make(map[string]string),
 	}

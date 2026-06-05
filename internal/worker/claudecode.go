@@ -127,7 +127,7 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 		return w.failResult(task, fmt.Errorf("LLM execution failed: %w", err)), nil
 	}
 
-	// Step 4: Parse response for branch name and PR number
+	// Step 5: Parse response for branch name and PR number
 	// Expected format in response:
 	// - "Branch: feature/KAI-123-summary"
 	// - "PR: #456" or "Pull Request: #456"
@@ -138,7 +138,19 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 		return w.failResult(task, fmt.Errorf("could not extract branch name from LLM response")), nil
 	}
 
-	// Step 5: Update task to Review status
+	// Step 6: Run quality gates BEFORE accepting PR
+	// This prevents low-quality PRs that would fail AI review and waste costs
+	fmt.Printf("[Worker %s] Running quality gates before accepting PR...\n", w.id)
+	gates := NewQualityGates(workspaceDir)
+	if err := gates.Validate(ctx, ruleset); err != nil {
+		// Quality checks failed - reject the work, do not create/accept PR
+		return w.failResult(task, fmt.Errorf("quality gates failed: %w", err)), nil
+	}
+
+	// Quality gates passed - PR is high quality and safe to accept
+	fmt.Printf("[Worker %s] Quality gates passed ✅ - PR approved\n", w.id)
+
+	// Step 7: Update task to Review status
 	task.Status = taskqueue.StatusReview
 	task.BranchName = branchName
 	task.PRNumber = prNumber
@@ -147,7 +159,7 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 		return w.failResult(task, fmt.Errorf("failed to update task to review: %w", err)), nil
 	}
 
-	// Step 6: Record success and return result
+	// Step 8: Record success and return result
 	w.mu.Lock()
 	w.tasksCompleted++
 	w.mu.Unlock()
