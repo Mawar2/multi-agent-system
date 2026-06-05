@@ -1,0 +1,53 @@
+Loading configuration from orchestrator.yml...
+Initializing task queue at ./tasks...
+Initializing task router...
+Initializing GitHub REST client...
+Initializing GitHub ticket client...
+Initializing supervisor...
+Initializing worker pools...
+Started 10 workers
+Starting supervisor...
+Monitoring 1 project(s):
+  - Mawar2/Kaimi
+
+Supervisor running. Press Ctrl+C to stop.
+[gemini-flash-3] Worker started (tier: gemini-flash)
+[gemini-flash-1] Worker started (tier: gemini-flash)
+[gemini-flash-2] Worker started (tier: gemini-flash)
+[gemini-pro-1] Worker started (tier: gemini-pro)
+[gemini-flash-4] Worker started (tier: gemini-flash)
+[gemini-flash-5] Worker started (tier: gemini-flash)
+[gemini-pro-3] Worker started (tier: gemini-pro)
+[gemini-pro-2] Worker started (tier: gemini-pro)
+[claude-1] Worker started (tier: claude)
+[claude-2] Worker started (tier: claude)
+2026/06/05 17:14:43 Supervisor: Starting main loop
+2026/06/05 17:14:43 Supervisor: Polling project Mawar2/Kaimi
+2026/06/05 17:14:43 Supervisor: Failed to fetch issues for Mawar2/Kaimi: failed to list issues: GitHub API returned status 401: {
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+2026/06/05 17:14:43 Supervisor: Initial poll failed: failed to fetch issues for Mawar2/Kaimi: failed to list issues: GitHub API returned status 401: {
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+2026/06/05 17:15:13 Supervisor: Monitoring for stalled tasks
+2026/06/05 17:15:43 Supervisor: Polling GitHub Issues
+2026/06/05 17:15:43 Supervisor: Polling project Mawar2/Kaimi
+2026/06/05 17:15:43 Supervisor: Failed to fetch issues for Mawar2/Kaimi: failed to list issues: GitHub API returned status 401: {
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+2026/06/05 17:15:43 Supervisor: Poll failed: failed to fetch issues for Mawar2/Kaimi: failed to list issues: GitHub API returned status 401: {
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+2026/06/05 17:15:43 Supervisor: Monitoring for stalled tasks
+2026/06/05 17:16:13 Supervisor: Monitoring for stalled tasks
+2026/06/05 17:16:43 Supervisor: Monitoring for stalled tasks
+2026/06/05 17:16:43 Supervisor: Polling GitHub Issues
+2026/06/05 17:16:43 Supervisor: Polling project Mawar2/Kaimi

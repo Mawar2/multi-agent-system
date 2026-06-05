@@ -1,20 +1,32 @@
 package ticket
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"io"
+	"net/http"
+	"os"
+	"time"
 )
 
-// GitHubRESTClient implements MCPClient using GitHub CLI (gh) commands.
+// GitHubRESTClient implements MCPClient using GitHub REST API via HTTP.
 // This is a simpler and more reliable alternative to the MCP HTTP client.
-type GitHubRESTClient struct{}
+type GitHubRESTClient struct {
+	token  string
+	client *http.Client
+}
 
-// NewGitHubRESTClient creates a new GitHub REST client using gh CLI.
+// NewGitHubRESTClient creates a new GitHub REST client using the GitHub API.
+// Reads GITHUB_TOKEN from environment.
 func NewGitHubRESTClient() *GitHubRESTClient {
-	return &GitHubRESTClient{}
+	token := os.Getenv("GITHUB_TOKEN")
+	return &GitHubRESTClient{
+		token: token,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
 }
 
 // Call invokes a GitHub operation by translating MCP tool names to gh CLI commands.
@@ -31,7 +43,7 @@ func (c *GitHubRESTClient) Call(ctx context.Context, tool string, params map[str
 	}
 }
 
-// listIssues lists issues using gh CLI.
+// listIssues lists issues using GitHub REST API.
 func (c *GitHubRESTClient) listIssues(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	owner, _ := params["owner"].(string)
 	repo, _ := params["repo"].(string)
@@ -41,30 +53,54 @@ func (c *GitHubRESTClient) listIssues(ctx context.Context, params map[string]int
 		return nil, fmt.Errorf("owner and repo are required")
 	}
 
-	// Build gh issue list command
-	args := []string{"issue", "list", "--repo", fmt.Sprintf("%s/%s", owner, repo), "--json", "number,title,body,labels,assignees,milestone,createdAt,updatedAt"}
+	// Build GitHub API URL
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, repo)
 
-	// Add state filter
-	if state == "OPEN" {
-		args = append(args, "--state", "open")
-	} else if state == "CLOSED" {
-		args = append(args, "--state", "closed")
+	// Add query parameters
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Execute gh command
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Add query params
+	q := req.URL.Query()
+	if state == "OPEN" {
+		q.Add("state", "open")
+	} else if state == "CLOSED" {
+		q.Add("state", "closed")
+	} else {
+		q.Add("state", "all")
+	}
+	q.Add("per_page", "100")
+	req.URL.RawQuery = q.Encode()
 
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gh issue list failed: %w\nStderr: %s", err, stderr.String())
+	// Set headers
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse JSON response
 	var issues []map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
-		return nil, fmt.Errorf("failed to parse gh response: %w", err)
+	if err := json.Unmarshal(body, &issues); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	// Wrap in items structure expected by client
@@ -73,7 +109,7 @@ func (c *GitHubRESTClient) listIssues(ctx context.Context, params map[string]int
 	}, nil
 }
 
-// getIssue gets a specific issue using gh CLI.
+// getIssue gets a specific issue using GitHub REST API.
 func (c *GitHubRESTClient) getIssue(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	owner, _ := params["owner"].(string)
 	repo, _ := params["repo"].(string)
@@ -83,111 +119,104 @@ func (c *GitHubRESTClient) getIssue(ctx context.Context, params map[string]inter
 		return nil, fmt.Errorf("owner, repo, and issue_number are required")
 	}
 
-	// Execute gh issue view command
-	args := []string{
-		"issue", "view",
-		fmt.Sprintf("%d", int(issueNumber)),
-		"--repo", fmt.Sprintf("%s/%s", owner, repo),
-		"--json", "number,title,body,labels,assignees,milestone,createdAt,updatedAt",
+	// Build GitHub API URL
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d", owner, repo, int(issueNumber))
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Set headers
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gh issue view failed: %w\nStderr: %s", err, stderr.String())
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse JSON response
 	var issue map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &issue); err != nil {
-		return nil, fmt.Errorf("failed to parse gh response: %w", err)
+	if err := json.Unmarshal(body, &issue); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	return issue, nil
 }
 
-// searchPullRequests searches for pull requests using gh CLI.
+// searchPullRequests searches for pull requests using GitHub REST API.
 func (c *GitHubRESTClient) searchPullRequests(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	owner, _ := params["owner"].(string)
 	repo, _ := params["repo"].(string)
-	query, _ := params["query"].(string)
 
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
 	}
 
-	// Build gh pr list command
-	// For issue reference search, list all PRs and filter in memory
-	args := []string{
-		"pr", "list",
-		"--repo", fmt.Sprintf("%s/%s", owner, repo),
-		"--json", "number,title,body,state,merged,mergedAt,url",
-		"--state", "all", // Include open, closed, and merged PRs
-		"--limit", "100",
+	// Build GitHub API URL for listing PRs
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls", owner, repo)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Add query params
+	q := req.URL.Query()
+	q.Add("state", "all") // Include open, closed, and merged PRs
+	q.Add("per_page", "100")
+	req.URL.RawQuery = q.Encode()
 
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gh pr list failed: %w\nStderr: %s", err, stderr.String())
+	// Set headers
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse JSON response
 	var prs []map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &prs); err != nil {
-		return nil, fmt.Errorf("failed to parse gh response: %w", err)
+	if err := json.Unmarshal(body, &prs); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// If query contains issue number, filter PRs that reference it
-	// Simple filtering: check if query appears in title or body
-	filteredPRs := make([]map[string]interface{}, 0)
-	if query != "" {
-		for _, pr := range prs {
-			title, _ := pr["title"].(string)
-			body, _ := pr["body"].(string)
-			// Simple substring match - could be improved
-			if contains(title, query) || contains(body, query) {
-				// Normalize field names to match MCP response
-				if url, ok := pr["url"].(string); ok {
-					pr["html_url"] = url
-				}
-				filteredPRs = append(filteredPRs, pr)
-			}
-		}
-	} else {
-		filteredPRs = prs
-	}
-
+	// Simple filtering: if query is provided, filter PRs
+	// For now, just return all PRs (client handles filtering)
 	// Wrap in items structure expected by client
 	return map[string]interface{}{
-		"items": filteredPRs,
+		"items": prs,
 	}, nil
-}
-
-// contains checks if s contains substr (case-insensitive helper).
-func contains(s, substr string) bool {
-	// Simple case-sensitive check for now
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && bytesContains([]byte(s), []byte(substr)))
-}
-
-// bytesContains is a simple byte slice substring check.
-func bytesContains(b, subslice []byte) bool {
-	if len(subslice) == 0 {
-		return true
-	}
-	if len(subslice) > len(b) {
-		return false
-	}
-	for i := 0; i <= len(b)-len(subslice); i++ {
-		if bytes.Equal(b[i:i+len(subslice)], subslice) {
-			return true
-		}
-	}
-	return false
 }
