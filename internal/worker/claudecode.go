@@ -53,7 +53,7 @@ func NewClaudeCodeWorker(
 		queue:         queue,
 		backend:       backend,
 		workspaceRoot: workspaceRoot,
-		workspaceMgr:  NewWorkspaceManager(workspaceRoot),
+		workspaceMgr:  NewWorkspaceManager(workspaceRoot, id),
 		tasksCompleted: 0,
 		tasksFailed:    0,
 	}

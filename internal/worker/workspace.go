@@ -12,17 +12,20 @@ import (
 )
 
 // WorkspaceManager manages isolated working directories for target repositories.
-// Each project gets cloned into its own workspace to avoid git context confusion.
+// Each worker gets its own workspace to enable parallel execution without conflicts.
 type WorkspaceManager struct {
-	rootDir   string                 // e.g., "./workspaces" or "./projects"
-	repoLocks map[string]*sync.Mutex // Per-repo locks (key: "owner/repo")
+	rootDir   string                 // Base root directory, e.g., "./projects"
+	workerID  string                 // Worker ID for isolation, e.g., "gemini-flash-1"
+	repoLocks map[string]*sync.Mutex // Per-worker-repo locks (key: "workerID/owner/repo")
 	locksMu   sync.RWMutex           // Protects repoLocks map itself
 }
 
-// NewWorkspaceManager creates a new workspace manager.
-func NewWorkspaceManager(rootDir string) *WorkspaceManager {
+// NewWorkspaceManager creates a new workspace manager for a specific worker.
+// Each worker gets isolated workspaces to enable parallel execution.
+func NewWorkspaceManager(rootDir, workerID string) *WorkspaceManager {
 	return &WorkspaceManager{
 		rootDir:   rootDir,
+		workerID:  workerID,
 		repoLocks: make(map[string]*sync.Mutex),
 	}
 }
@@ -33,14 +36,15 @@ func NewWorkspaceManager(rootDir string) *WorkspaceManager {
 //
 // Returns the absolute path to the workspace directory.
 func (wm *WorkspaceManager) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
-	// Acquire per-repository lock to prevent concurrent clone/pull operations
+	// Acquire per-worker-repo lock to prevent concurrent clone/pull operations
+	// Each worker has its own lock for each repo, enabling true parallelism
 	lock := wm.getRepoLock(task.RepoOwner, task.RepoName)
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Now only ONE worker can prepare this specific repo at a time
-	// Workspace path: workspaces/owner/repo
-	workspaceDir := filepath.Join(wm.rootDir, task.RepoOwner, task.RepoName)
+	// Workspace path: {rootDir}/{workerID}/{owner}/{repo}
+	// Example: ./projects/gemini-flash-1/Mawar2/Kaimi
+	workspaceDir := filepath.Join(wm.rootDir, wm.workerID, task.RepoOwner, task.RepoName)
 
 	// Check if workspace already exists
 	if _, err := os.Stat(filepath.Join(workspaceDir, ".git")); err == nil {
@@ -116,10 +120,11 @@ func (wm *WorkspaceManager) pullLatest(ctx context.Context, workspaceDir string)
 	return nil
 }
 
-// getRepoLock returns the mutex for a specific repository, creating it if needed.
+// getRepoLock returns the mutex for a specific worker-repo combination, creating it if needed.
 // Thread-safe: uses locksMu to protect the repoLocks map.
+// Lock key includes worker ID for true per-worker isolation and parallel execution.
 func (wm *WorkspaceManager) getRepoLock(owner, repo string) *sync.Mutex {
-	key := fmt.Sprintf("%s/%s", owner, repo)
+	key := fmt.Sprintf("%s/%s/%s", wm.workerID, owner, repo)
 
 	// Fast path: try to get existing lock with read lock
 	wm.locksMu.RLock()
@@ -145,9 +150,9 @@ func (wm *WorkspaceManager) getRepoLock(owner, repo string) *sync.Mutex {
 	return lock
 }
 
-// CleanWorkspace removes a workspace directory (useful for cleanup).
+// CleanWorkspace removes a worker's workspace directory (useful for cleanup).
 func (wm *WorkspaceManager) CleanWorkspace(owner, repo string) error {
-	workspaceDir := filepath.Join(wm.rootDir, owner, repo)
+	workspaceDir := filepath.Join(wm.rootDir, wm.workerID, owner, repo)
 	if err := os.RemoveAll(workspaceDir); err != nil {
 		return fmt.Errorf("failed to remove workspace: %w", err)
 	}
