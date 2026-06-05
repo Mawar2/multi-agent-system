@@ -57,7 +57,7 @@ const (
 //	    Error:     "SAM.gov API returned 429 (rate limit exceeded)",
 //	    CompletedAt: time.Now(),
 //	}
-type AgentResult struct {
+type AgentResult struct { //nolint:revive // AgentResult is intentional; callers use the full agent.AgentResult name for clarity
 	// AgentName identifies which agent produced this result.
 	// Examples: "hunter", "scorer", "outline", "writer", "final-review"
 	AgentName string `json:"agent_name"`
