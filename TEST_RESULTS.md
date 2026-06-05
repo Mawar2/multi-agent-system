@@ -40,9 +40,9 @@
 
 ---
 
-## ⚠️ Known Issue: Workspace Concurrency
+## ✅ Fixed: Workspace Concurrency
 
-### Problem
+### Problem (Previously)
 When supervisor polls and finds many issues, all workers try to claim tasks simultaneously. Multiple workers then try to clone the same repo at the same time, causing race conditions:
 
 ```
@@ -52,37 +52,41 @@ When supervisor polls and finds many issues, all workers try to claim tasks simu
 fatal: destination path 'projects\Mawar2\Kaimi' already exists and is not an empty directory.
 ```
 
-**Result:** Only the first worker succeeds; others fail with clone errors.
-
-### Root Cause
-The WorkspaceManager doesn't have locking/synchronization to prevent concurrent clones of the same repository.
-
-### Impact
-- **Low for single-repo testing** - One worker succeeds, others fail and retry later
-- **High for production** - Many tasks fail unnecessarily, wasted work
-
-### Solution (Not Yet Implemented)
-Add mutex locking in WorkspaceManager:
+### Solution (Implemented ✅)
+Added per-repository mutex locking to WorkspaceManager:
 
 ```go
 type WorkspaceManager struct {
-    rootDir    string
-    repoLocks  map[string]*sync.Mutex  // Lock per repo
-    locksM     sync.Mutex               // Protects the map
+    rootDir   string
+    repoLocks map[string]*sync.Mutex  // Lock per repo (key: "owner/repo")
+    locksMu   sync.RWMutex            // Protects the lock map
 }
 
 func (wm *WorkspaceManager) PrepareWorkspace(ctx context.Context, task *Task) (string, error) {
-    // Get lock for this specific repo
-    lock := wm.getLock(task.RepoOwner + "/" + task.RepoName)
+    // Acquire per-repository lock
+    lock := wm.getRepoLock(task.RepoOwner, task.RepoName)
     lock.Lock()
     defer lock.Unlock()
 
-    // Now only one worker can clone/pull this repo at a time
-    // ... existing clone/pull logic ...
+    // Now only ONE worker can prepare this specific repo at a time
+    // ... clone/pull logic ...
+}
+
+func (wm *WorkspaceManager) getRepoLock(owner, repo string) *sync.Mutex {
+    // Double-check pattern for thread-safe lock creation
+    // ... implementation ...
 }
 ```
 
-**Priority:** Medium (works for now, but should be fixed before scale testing)
+**Implementation Details:**
+- Fine-grained locking (Kaimi workers don't block multi-agent-system workers)
+- Automatic lock creation on first access
+- Lock map protected by RWMutex (concurrent reads, exclusive writes)
+- Follows standard Go concurrency patterns (double-check pattern)
+
+**Commit:** `0a64927` - "Add per-repository mutex locking to WorkspaceManager"
+
+**Status:** ✅ Implemented and ready for testing
 
 ---
 
