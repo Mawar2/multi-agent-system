@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -166,6 +167,106 @@ func TestAgentResult_ReadyToSubmitResult(t *testing.T) {
 	}
 	if result.IsFailed() {
 		t.Error("IsFailed() should be false for ready_to_submit result")
+	}
+}
+
+func TestAgentResult_IsTerminal(t *testing.T) {
+	tests := []struct {
+		name   string
+		status Status
+		want   bool
+	}{
+		{"success is terminal", StatusSuccess, true},
+		{"failed is terminal", StatusFailed, true},
+		{"ready_to_submit is terminal", StatusReadyToSubmit, true},
+		{"needs_human is not terminal", StatusNeedsHuman, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &AgentResult{Status: tt.status}
+			if got := result.IsTerminal(); got != tt.want {
+				t.Errorf("IsTerminal() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentResult_JSONRoundTrip(t *testing.T) {
+	original := &AgentResult{
+		AgentName:   "scorer",
+		Status:      StatusSuccess,
+		NoticeID:    "ABC-123-2026",
+		Summary:     "Scored 87/100 - Strong NAICS match",
+		OutputRef:   "opportunities/ABC-123-2026.json",
+		Flags:       map[string]string{"score": "87", "recommendation": "BID"},
+		CompletedAt: time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC),
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var decoded AgentResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if decoded.AgentName != original.AgentName {
+		t.Errorf("AgentName = %v, want %v", decoded.AgentName, original.AgentName)
+	}
+	if decoded.Status != original.Status {
+		t.Errorf("Status = %v, want %v", decoded.Status, original.Status)
+	}
+	if decoded.NoticeID != original.NoticeID {
+		t.Errorf("NoticeID = %v, want %v", decoded.NoticeID, original.NoticeID)
+	}
+	if decoded.Summary != original.Summary {
+		t.Errorf("Summary = %v, want %v", decoded.Summary, original.Summary)
+	}
+	if decoded.OutputRef != original.OutputRef {
+		t.Errorf("OutputRef = %v, want %v", decoded.OutputRef, original.OutputRef)
+	}
+	if decoded.Flags["score"] != original.Flags["score"] {
+		t.Errorf("Flags[score] = %v, want %v", decoded.Flags["score"], original.Flags["score"])
+	}
+	if !decoded.CompletedAt.Equal(original.CompletedAt) {
+		t.Errorf("CompletedAt = %v, want %v", decoded.CompletedAt, original.CompletedAt)
+	}
+}
+
+func TestAgentResult_OptionalFieldsOmitted(t *testing.T) {
+	// Only required fields populated; optional fields should be absent from JSON.
+	result := &AgentResult{
+		AgentName:   "hunter",
+		Status:      StatusFailed,
+		Error:       "SAM.gov rate limit exceeded",
+		CompletedAt: time.Date(2026, 6, 5, 8, 0, 0, 0, time.UTC),
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	// These fields are omitempty and must not appear when empty.
+	for _, absent := range []string{"notice_id", "summary", "output_ref", "flags"} {
+		if _, ok := raw[absent]; ok {
+			t.Errorf("field %q should be omitted from JSON when empty, but was present", absent)
+		}
+	}
+
+	// Required fields must always be present.
+	for _, present := range []string{"agent_name", "status", "error", "completed_at"} {
+		if _, ok := raw[present]; !ok {
+			t.Errorf("field %q should always be present in JSON, but was absent", present)
+		}
 	}
 }
 

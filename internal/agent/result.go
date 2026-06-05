@@ -57,7 +57,7 @@ const (
 //	    Error:     "SAM.gov API returned 429 (rate limit exceeded)",
 //	    CompletedAt: time.Now(),
 //	}
-type AgentResult struct {
+type AgentResult struct { //nolint:revive // AgentResult is intentional; callers use the full agent.AgentResult name for clarity
 	// AgentName identifies which agent produced this result.
 	// Examples: "hunter", "scorer", "outline", "writer", "final-review"
 	AgentName string `json:"agent_name"`
@@ -113,4 +113,17 @@ func (r *AgentResult) IsFailed() bool {
 // NeedsHuman returns true if the agent requires human intervention.
 func (r *AgentResult) NeedsHuman() bool {
 	return r.Status == StatusNeedsHuman
+}
+
+// IsTerminal returns true if the agent has reached a final state and no further
+// agent computation will occur. Terminal states require no more agent action:
+// the Manager may stop scheduling follow-up agents and surface the result to a human.
+// (StatusNeedsHuman is not terminal — the agent must be re-run after intervention.)
+func (r *AgentResult) IsTerminal() bool {
+	switch r.Status {
+	case StatusSuccess, StatusFailed, StatusReadyToSubmit:
+		return true
+	default:
+		return false
+	}
 }
