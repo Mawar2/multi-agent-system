@@ -211,37 +211,37 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 
 	// Task details
 	sb.WriteString("## TASK DETAILS\n\n")
-	sb.WriteString(fmt.Sprintf("**Repository:** %s/%s\n", task.RepoOwner, task.RepoName))
-	sb.WriteString(fmt.Sprintf("**Issue #%d:** %s\n\n", task.IssueNumber, task.Title))
+	fmt.Fprintf(&sb, "**Repository:** %s/%s\n", task.RepoOwner, task.RepoName)
+	fmt.Fprintf(&sb, "**Issue #%d:** %s\n\n", task.IssueNumber, task.Title)
 	sb.WriteString("**Description:**\n")
 	sb.WriteString(task.Description)
 	sb.WriteString("\n\n")
 
 	// Project conventions
 	sb.WriteString("## PROJECT CONVENTIONS\n\n")
-	sb.WriteString(fmt.Sprintf("**Project Path:** %s\n\n", ruleset.ProjectPath))
+	fmt.Fprintf(&sb, "**Project Path:** %s\n\n", ruleset.ProjectPath)
 
 	if ruleset.HasBranchPattern() {
-		sb.WriteString(fmt.Sprintf("**Branch Naming Pattern:** %s\n", ruleset.BranchPattern))
-		sb.WriteString(fmt.Sprintf("Example: Replace {ticket} with issue number, {summary} with brief description\n\n"))
+		fmt.Fprintf(&sb, "**Branch Naming Pattern:** %s\n", ruleset.BranchPattern)
+		sb.WriteString("Example: Replace {ticket} with issue number, {summary} with brief description\n\n")
 	}
 
 	if ruleset.HasCommitPattern() {
-		sb.WriteString(fmt.Sprintf("**Commit Message Format:** %s\n", ruleset.CommitPattern))
-		sb.WriteString(fmt.Sprintf("Example: Replace {ticket} with issue number, {description} with change summary\n\n"))
+		fmt.Fprintf(&sb, "**Commit Message Format:** %s\n", ruleset.CommitPattern)
+		sb.WriteString("Example: Replace {ticket} with issue number, {description} with change summary\n\n")
 	}
 
 	if len(ruleset.ForbiddenFiles) > 0 {
 		sb.WriteString("**Forbidden Files:** Do NOT create these files:\n")
 		for _, file := range ruleset.ForbiddenFiles {
-			sb.WriteString(fmt.Sprintf("  - %s\n", file))
+			fmt.Fprintf(&sb, "  - %s\n", file)
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("**Test Command:** %s\n", ruleset.TestCommand))
-	sb.WriteString(fmt.Sprintf("**Lint Command:** %s\n", ruleset.LintCommand))
-	sb.WriteString(fmt.Sprintf("**Format Command:** %s\n\n", ruleset.FormatCommand))
+	fmt.Fprintf(&sb, "**Test Command:** %s\n", ruleset.TestCommand)
+	fmt.Fprintf(&sb, "**Lint Command:** %s\n", ruleset.LintCommand)
+	fmt.Fprintf(&sb, "**Format Command:** %s\n\n", ruleset.FormatCommand)
 
 	if ruleset.TDDRequired {
 		sb.WriteString("**TDD REQUIRED:** You MUST write tests BEFORE implementation code.\n")
@@ -254,10 +254,10 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 
 	sb.WriteString("1. **Create Feature Branch**\n")
 	if ruleset.HasBranchPattern() {
-		sb.WriteString(fmt.Sprintf("   - Use the branch pattern: %s\n", ruleset.BranchPattern))
-		sb.WriteString(fmt.Sprintf("   - For this task: Replace {ticket} with %d\n", task.IssueNumber))
+		fmt.Fprintf(&sb, "   - Use the branch pattern: %s\n", ruleset.BranchPattern)
+		fmt.Fprintf(&sb, "   - For this task: Replace {ticket} with %d\n", task.IssueNumber)
 	} else {
-		sb.WriteString(fmt.Sprintf("   - Create branch: feature/issue-%d-<brief-summary>\n", task.IssueNumber))
+		fmt.Fprintf(&sb, "   - Create branch: feature/issue-%d-<brief-summary>\n", task.IssueNumber)
 	}
 	sb.WriteString("\n")
 
@@ -274,9 +274,9 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 	sb.WriteString("\n")
 
 	sb.WriteString("3. **Run Quality Checks**\n")
-	sb.WriteString(fmt.Sprintf("   - Run tests: %s\n", ruleset.TestCommand))
-	sb.WriteString(fmt.Sprintf("   - Run linter: %s\n", ruleset.LintCommand))
-	sb.WriteString(fmt.Sprintf("   - Run formatter: %s\n", ruleset.FormatCommand))
+	fmt.Fprintf(&sb, "   - Run tests: %s\n", ruleset.TestCommand)
+	fmt.Fprintf(&sb, "   - Run linter: %s\n", ruleset.LintCommand)
+	fmt.Fprintf(&sb, "   - Run formatter: %s\n", ruleset.FormatCommand)
 	sb.WriteString("   - Fix any failures before proceeding\n")
 	sb.WriteString("\n")
 

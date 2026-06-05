@@ -104,7 +104,7 @@ func (c *HTTPMCPClient) Call(ctx context.Context, tool string, params map[string
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)

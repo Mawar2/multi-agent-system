@@ -24,9 +24,6 @@ type ClaudeCodeBackend struct {
 	// models is the list of Claude models available via Claude Code
 	models []string
 
-	// cliPath is the path to the Claude Code CLI executable (optional in Phase 1)
-	cliPath string
-
 	// maxTokens sets the context window limit for CLI invocations
 	maxTokens int
 }

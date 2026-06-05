@@ -586,36 +586,36 @@ func buildPromptForTest(w *ClaudeCodeWorker, task *taskqueue.Task, ruleset *test
 
 	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")
 	sb.WriteString("## TASK DETAILS\n\n")
-	sb.WriteString(fmt.Sprintf("**Repository:** %s/%s\n", task.RepoOwner, task.RepoName))
-	sb.WriteString(fmt.Sprintf("**Issue #%d:** %s\n\n", task.IssueNumber, task.Title))
+	fmt.Fprintf(&sb, "**Repository:** %s/%s\n", task.RepoOwner, task.RepoName)
+	fmt.Fprintf(&sb, "**Issue #%d:** %s\n\n", task.IssueNumber, task.Title)
 	sb.WriteString("**Description:**\n")
 	sb.WriteString(task.Description)
 	sb.WriteString("\n\n")
 
 	sb.WriteString("## PROJECT CONVENTIONS\n\n")
-	sb.WriteString(fmt.Sprintf("**Project Path:** %s\n\n", ruleset.ProjectPath))
+	fmt.Fprintf(&sb, "**Project Path:** %s\n\n", ruleset.ProjectPath)
 
 	if ruleset.BranchPattern != "" {
-		sb.WriteString(fmt.Sprintf("**Branch Naming Pattern:** %s\n", ruleset.BranchPattern))
-		sb.WriteString(fmt.Sprintf("Example: Replace {ticket} with issue number, {summary} with brief description\n\n"))
+		fmt.Fprintf(&sb, "**Branch Naming Pattern:** %s\n", ruleset.BranchPattern)
+		sb.WriteString("Example: Replace {ticket} with issue number, {summary} with brief description\n\n")
 	}
 
 	if ruleset.CommitPattern != "" {
-		sb.WriteString(fmt.Sprintf("**Commit Message Format:** %s\n", ruleset.CommitPattern))
-		sb.WriteString(fmt.Sprintf("Example: Replace {ticket} with issue number, {description} with change summary\n\n"))
+		fmt.Fprintf(&sb, "**Commit Message Format:** %s\n", ruleset.CommitPattern)
+		sb.WriteString("Example: Replace {ticket} with issue number, {description} with change summary\n\n")
 	}
 
 	if len(ruleset.ForbiddenFiles) > 0 {
 		sb.WriteString("**Forbidden Files:** Do NOT create these files:\n")
 		for _, file := range ruleset.ForbiddenFiles {
-			sb.WriteString(fmt.Sprintf("  - %s\n", file))
+			fmt.Fprintf(&sb, "  - %s\n", file)
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("**Test Command:** %s\n", ruleset.TestCommand))
-	sb.WriteString(fmt.Sprintf("**Lint Command:** %s\n", ruleset.LintCommand))
-	sb.WriteString(fmt.Sprintf("**Format Command:** %s\n\n", ruleset.FormatCommand))
+	fmt.Fprintf(&sb, "**Test Command:** %s\n", ruleset.TestCommand)
+	fmt.Fprintf(&sb, "**Lint Command:** %s\n", ruleset.LintCommand)
+	fmt.Fprintf(&sb, "**Format Command:** %s\n\n", ruleset.FormatCommand)
 
 	if ruleset.TDDRequired {
 		sb.WriteString("**TDD REQUIRED:** You MUST write tests BEFORE implementation code.\n")

@@ -27,13 +27,17 @@ func TestNewHTTPMCPClientFromEnv(t *testing.T) {
 	originalURL := os.Getenv("MCP_SERVER_URL")
 	originalToken := os.Getenv("GITHUB_TOKEN")
 	defer func() {
-		os.Setenv("MCP_SERVER_URL", originalURL)
-		os.Setenv("GITHUB_TOKEN", originalToken)
+		_ = os.Setenv("MCP_SERVER_URL", originalURL)
+		_ = os.Setenv("GITHUB_TOKEN", originalToken)
 	}()
 
 	t.Run("with both env vars set", func(t *testing.T) {
-		os.Setenv("MCP_SERVER_URL", "https://custom.mcp.server/")
-		os.Setenv("GITHUB_TOKEN", "test-token-123")
+		if err := os.Setenv("MCP_SERVER_URL", "https://custom.mcp.server/"); err != nil {
+			t.Fatalf("failed to set env: %v", err)
+		}
+		if err := os.Setenv("GITHUB_TOKEN", "test-token-123"); err != nil {
+			t.Fatalf("failed to set env: %v", err)
+		}
 
 		client, err := NewHTTPMCPClientFromEnv()
 		if err != nil {
@@ -48,8 +52,12 @@ func TestNewHTTPMCPClientFromEnv(t *testing.T) {
 	})
 
 	t.Run("with default server URL", func(t *testing.T) {
-		os.Unsetenv("MCP_SERVER_URL")
-		os.Setenv("GITHUB_TOKEN", "test-token-456")
+		if err := os.Unsetenv("MCP_SERVER_URL"); err != nil {
+			t.Fatalf("failed to unset env: %v", err)
+		}
+		if err := os.Setenv("GITHUB_TOKEN", "test-token-456"); err != nil {
+			t.Fatalf("failed to set env: %v", err)
+		}
 
 		client, err := NewHTTPMCPClientFromEnv()
 		if err != nil {
@@ -61,7 +69,9 @@ func TestNewHTTPMCPClientFromEnv(t *testing.T) {
 	})
 
 	t.Run("missing GITHUB_TOKEN", func(t *testing.T) {
-		os.Unsetenv("GITHUB_TOKEN")
+		if err := os.Unsetenv("GITHUB_TOKEN"); err != nil {
+			t.Fatalf("failed to unset env: %v", err)
+		}
 
 		_, err := NewHTTPMCPClientFromEnv()
 		if err == nil {
@@ -107,7 +117,9 @@ func TestHTTPMCPClient_Call_Success(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -150,7 +162,9 @@ func TestHTTPMCPClient_Call_MCPError(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -175,7 +189,7 @@ func TestHTTPMCPClient_Call_HTTPError(t *testing.T) {
 	// Create mock server that returns HTTP error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
+		_, _ = w.Write([]byte("Internal Server Error"))
 	}))
 	defer server.Close()
 
@@ -197,7 +211,7 @@ func TestHTTPMCPClient_Call_InvalidJSON(t *testing.T) {
 	// Create mock server that returns invalid JSON
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{invalid json"))
+		_, _ = w.Write([]byte("{invalid json"))
 	}))
 	defer server.Close()
 
