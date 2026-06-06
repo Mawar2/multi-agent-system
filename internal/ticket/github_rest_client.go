@@ -26,11 +26,11 @@ type PullRequest struct {
 	Merged     bool   `json:"merged"`
 	Title      string `json:"title"`
 	HeadSHA    string `json:"head_sha"`
-	HeadBranch string `json:"head_ref"`   // Branch name (e.g., "feature/KAI-6-final-review")
-	Body       string `json:"body"`       // PR description
-	Draft      bool   `json:"draft"`      // Whether PR is draft
-	Additions  int    `json:"additions"`  // Lines added
-	Deletions  int    `json:"deletions"`  // Lines deleted
+	HeadBranch string `json:"head_ref"`  // Branch name (e.g., "feature/KAI-6-final-review")
+	Body       string `json:"body"`      // PR description
+	Draft      bool   `json:"draft"`     // Whether PR is draft
+	Additions  int    `json:"additions"` // Lines added
+	Deletions  int    `json:"deletions"` // Lines deleted
 }
 
 // PRComment represents a comment on a pull request.
