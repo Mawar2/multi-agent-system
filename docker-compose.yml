@@ -1,0 +1,40 @@
+services:
+  supervisor:
+    build: .
+    image: mawar2/multi-agent-system:latest
+    volumes:
+      # Persist task queue JSON files across restarts.
+      - tasks:/app/tasks
+      # Persist per-worker git clones across restarts (saves bandwidth).
+      - workspaces:/app/projects
+      # Mount config read-only; copy orchestrator.example.yml → orchestrator.yml first.
+      - ./orchestrator.yml:/app/orchestrator.yml:ro
+    environment:
+      - GITHUB_TOKEN
+      - SAM_API_KEY
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
+
+  hunter:
+    build: .
+    image: mawar2/multi-agent-system:latest
+    entrypoint: ["/hunter"]
+    command: ["--keyword", "software", "--limit", "50"]
+    environment:
+      - SAM_API_KEY
+    profiles:
+      # Run hunter on-demand: docker compose --profile hunt run hunter
+      - hunt
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  tasks:
+  workspaces:

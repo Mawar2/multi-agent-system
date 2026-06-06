@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -66,6 +67,38 @@ func (m *mockQueue) Release(ctx context.Context, taskID string) error {
 		return nil
 	}
 	return fmt.Errorf("task not found: %s", taskID)
+}
+
+// mockWorkspaceProvider is a mock workspaceProvider for hermetic tests.
+type mockWorkspaceProvider struct {
+	prepareFunc    func(ctx context.Context, task *taskqueue.Task) (string, error)
+	prepareFixFunc func(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+func (m *mockWorkspaceProvider) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFunc != nil {
+		return m.prepareFunc(ctx, task)
+	}
+	return "/tmp/fake-workspace", nil
+}
+
+func (m *mockWorkspaceProvider) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFixFunc != nil {
+		return m.prepareFixFunc(ctx, task)
+	}
+	return "/tmp/fake-workspace", nil
+}
+
+// mockQualityValidator is a mock qualityValidator for hermetic tests.
+type mockQualityValidator struct {
+	validateFunc func(ctx context.Context, ruleset *conventions.Ruleset) error
+}
+
+func (m *mockQualityValidator) Validate(ctx context.Context, ruleset *conventions.Ruleset) error {
+	if m.validateFunc != nil {
+		return m.validateFunc(ctx, ruleset)
+	}
+	return nil
 }
 
 // mockBackend is a mock implementation of LLMBackend for testing.
@@ -293,6 +326,9 @@ func TestExecute(t *testing.T) {
 			backend.executeFunc = tt.executeFunc
 
 			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			// Inject hermetic mocks — no real git or test/lint calls
+			worker.workspaceMgr = &mockWorkspaceProvider{}
+			worker.qualityGate = &mockQualityValidator{}
 
 			result, err := worker.Execute(context.Background(), tt.task)
 

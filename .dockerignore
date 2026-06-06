@@ -1,0 +1,22 @@
+# Task queue — populated at runtime, not part of the image.
+tasks/
+
+# Per-worker git clones — populated at runtime.
+projects/
+
+# Git history — not needed in the build context.
+.git/
+
+# Documentation — not needed in the binary.
+docs/
+
+# Local config overrides — never bake secrets into the image.
+orchestrator.yml
+
+# Build artifacts
+*.exe
+bin/
+
+# Test fixtures and test binaries
+*.test
+test/
