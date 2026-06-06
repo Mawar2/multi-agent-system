@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/dashboard"
 	"github.com/Mawar2/multi-agent-system/internal/llm"
 	"github.com/Mawar2/multi-agent-system/internal/orchestrator"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -16,9 +17,15 @@ import (
 	"github.com/Mawar2/multi-agent-system/internal/worker"
 )
 
+// workerList implements dashboard.WorkerProvider over a plain slice.
+type workerList struct{ ws []worker.Worker }
+
+func (l *workerList) Workers() []worker.Worker { return l.ws }
+
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "orchestrator.yml", "Path to configuration file")
+	dashboardAddr := flag.String("dashboard-addr", ":8080", "Address for the observability dashboard (empty to disable)")
 	flag.Parse()
 
 	// Load configuration
@@ -53,6 +60,14 @@ func main() {
 	fmt.Println("Initializing worker pools...")
 	workers := initializeWorkers(config, queue)
 	fmt.Printf("Started %d workers\n", len(workers))
+
+	// Start dashboard (optional)
+	var dash *dashboard.Server
+	if *dashboardAddr != "" {
+		dash = dashboard.NewServer(*dashboardAddr, queue, &workerList{ws: workers})
+		dash.Start()
+		fmt.Printf("Dashboard listening on http://%s\n", *dashboardAddr)
+	}
 
 	// Set up context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,6 +104,11 @@ func main() {
 
 	// Graceful shutdown
 	fmt.Println("Shutting down...")
+	if dash != nil {
+		if err := dash.Shutdown(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "Dashboard shutdown error: %v\n", err)
+		}
+	}
 	if err := supervisor.Shutdown(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Shutdown error: %v\n", err)
 	}
