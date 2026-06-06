@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,15 +23,45 @@ type Config struct {
 	TaskQueueDir        string `yaml:"task_queue_dir"`        // Directory for JSON queue (default: ./tasks)
 }
 
+// IssueFilterConfig controls which issues the supervisor will skip.
+// All filters are opt-in; omitting a field preserves the pre-existing behaviour.
+type IssueFilterConfig struct {
+	// SkipIfHasPR skips issues that already have an associated PR.
+	// Defaults to true when omitted (preserves existing behaviour).
+	SkipIfHasPR *bool `yaml:"skip_if_has_pr,omitempty"`
+
+	// SkipLabels lists labels that disqualify an issue from automatic processing.
+	// Matching is case-insensitive. Example: ["needs-human-design", "blocked"].
+	SkipLabels []string `yaml:"skip_labels,omitempty"`
+
+	// RequireAcceptanceCriteria skips issues that contain no "- [ ]" checklist items.
+	// Defaults to false (issues without checklists are allowed through).
+	RequireAcceptanceCriteria bool `yaml:"require_acceptance_criteria"`
+}
+
+// skipIfHasPREnabled returns the effective value of SkipIfHasPR, defaulting to true.
+func (f IssueFilterConfig) skipIfHasPREnabled() bool {
+	if f.SkipIfHasPR == nil {
+		return true
+	}
+	return *f.SkipIfHasPR
+}
+
+// hasAcceptanceCriteria reports whether body contains at least one unchecked checkbox.
+func hasAcceptanceCriteria(body string) bool {
+	return strings.Contains(body, "- [ ]")
+}
+
 // ProjectConfig defines a project to monitor.
 type ProjectConfig struct {
-	Name            string   `yaml:"name"`             // Project name (e.g., "kaimi")
-	RepoOwner       string   `yaml:"repo_owner"`       // GitHub owner (e.g., "Mawar2")
-	RepoName        string   `yaml:"repo_name"`        // GitHub repo (e.g., "Kaimi")
-	ConventionsPath string   `yaml:"conventions_path"` // Path to CLAUDE.md (e.g., "./CLAUDE.md")
-	BranchPattern   string   `yaml:"branch_pattern"`   // e.g., "feature/KAI-{ticket}-{summary}"
-	CommitPattern   string   `yaml:"commit_pattern"`   // e.g., "{ticket}_{description}"
-	Labels          []string `yaml:"labels,omitempty"` // Filter issues by labels (optional)
+	Name            string            `yaml:"name"`             // Project name (e.g., "kaimi")
+	RepoOwner       string            `yaml:"repo_owner"`       // GitHub owner (e.g., "Mawar2")
+	RepoName        string            `yaml:"repo_name"`        // GitHub repo (e.g., "Kaimi")
+	ConventionsPath string            `yaml:"conventions_path"` // Path to CLAUDE.md (e.g., "./CLAUDE.md")
+	BranchPattern   string            `yaml:"branch_pattern"`   // e.g., "feature/KAI-{ticket}-{summary}"
+	CommitPattern   string            `yaml:"commit_pattern"`   // e.g., "{ticket}_{description}"
+	Labels          []string          `yaml:"labels,omitempty"` // Filter issues by labels (optional)
+	IssueFilter     IssueFilterConfig `yaml:"issue_filter"`     // Smart filtering rules (optional)
 }
 
 // WorkerTierConfig defines worker pool settings.
@@ -90,6 +121,20 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// IssueFilterForRepo returns the IssueFilterConfig for the named repo.
+// If the repo is not in the configured projects, safe defaults are returned
+// (SkipIfHasPR true, no label filters, AC not required).
+func (c *Config) IssueFilterForRepo(owner, repo string) IssueFilterConfig {
+	for _, proj := range c.Projects {
+		if strings.EqualFold(proj.RepoOwner, owner) && strings.EqualFold(proj.RepoName, repo) {
+			return proj.IssueFilter
+		}
+	}
+	// Safe defaults for unknown repos.
+	t := true
+	return IssueFilterConfig{SkipIfHasPR: &t}
 }
 
 // Validate checks that the configuration is valid.
