@@ -8,15 +8,16 @@ projects:
     conventions_path: ./CLAUDE.md
     branch_pattern: "feature/KAI-{ticket}-{summary}"
     commit_pattern: "{ticket}_{description}"
-    labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
+    labels: []  # Optional: filter issues by labels
 
-  # Add more projects as needed
-  # - name: other-project
-  #   repo_owner: YourOrg
-  #   repo_name: YourRepo
-  #   conventions_path: ./PROJECT_RULES.md
-  #   branch_pattern: "{ticket}-{summary}"
-  #   commit_pattern: "[{ticket}] {description}"
+  # Multi-agent-system - THE SYSTEM IMPROVING ITSELF!
+  - name: multi-agent-system
+    repo_owner: Mawar2
+    repo_name: multi-agent-system
+    conventions_path: ./CLAUDE.md
+    branch_pattern: "feature/{ticket}-{summary}"
+    commit_pattern: "{ticket}_{description}"
+    labels: []  # Process all issues
 
 worker_tiers:
   gemini_flash:
