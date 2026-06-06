@@ -30,6 +30,12 @@ type Task struct {
 	CompletedAt time.Time `json:"completed_at"` // When PR was created or task failed
 	Attempts    int       `json:"attempts"`     // Number of times this task has been attempted
 
+	// Feedback loop (for pr_feedback tasks that fix AI review comments)
+	ParentTaskID    string `json:"parent_task_id,omitempty"`    // ID of parent task (for pr_feedback tasks)
+	ReviewIteration int    `json:"review_iteration"`            // 0 for issue tasks, 1+ for fix iterations (max 3)
+	ReviewFeedback  string `json:"review_feedback,omitempty"`   // AI review comment text for LLM context
+	ReviewCommentID int64  `json:"review_comment_id,omitempty"` // GitHub comment ID for deduplication
+
 	// Metadata
 	ErrorMsg string            `json:"error_msg,omitempty"` // Error message if failed
 	LogsPath string            `json:"logs_path,omitempty"` // Path to worker logs
