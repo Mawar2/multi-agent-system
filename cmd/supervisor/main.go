@@ -45,13 +45,9 @@ func main() {
 	fmt.Println("Initializing GitHub REST client...")
 	restClient := ticket.NewGitHubRESTClient()
 
-	// Initialize ticket client
-	fmt.Println("Initializing GitHub ticket client...")
-	ticketClient := ticket.NewGitHubClient(restClient)
-
-	// Initialize supervisor
+	// Initialize supervisor (use REST client directly for PR monitoring support)
 	fmt.Println("Initializing supervisor...")
-	supervisor := orchestrator.NewSupervisor(config, queue, router, ticketClient)
+	supervisor := orchestrator.NewSupervisor(config, queue, router, restClient)
 
 	// Initialize workers
 	fmt.Println("Initializing worker pools...")

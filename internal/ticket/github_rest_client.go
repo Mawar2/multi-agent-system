@@ -21,11 +21,16 @@ type GitHubRESTClient struct {
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	Number  int    `json:"number"`
-	State   string `json:"state"` // "open", "closed"
-	Merged  bool   `json:"merged"`
-	Title   string `json:"title"`
-	HeadSHA string `json:"head_sha"`
+	Number     int    `json:"number"`
+	State      string `json:"state"` // "open", "closed"
+	Merged     bool   `json:"merged"`
+	Title      string `json:"title"`
+	HeadSHA    string `json:"head_sha"`
+	HeadBranch string `json:"head_ref"`   // Branch name (e.g., "feature/KAI-6-final-review")
+	Body       string `json:"body"`       // PR description
+	Draft      bool   `json:"draft"`      // Whether PR is draft
+	Additions  int    `json:"additions"`  // Lines added
+	Deletions  int    `json:"deletions"`  // Lines deleted
 }
 
 // PRComment represents a comment on a pull request.
@@ -413,6 +418,89 @@ func (c *GitHubRESTClient) GetPullRequest(ctx context.Context, owner, repo strin
 	}
 
 	return pr, nil
+}
+
+// ListOpenPRs fetches all open pull requests for a repository.
+// Used by backfill script to create tasks for existing PRs.
+func (c *GitHubRESTClient) ListOpenPRs(ctx context.Context, owner, repo string) ([]*PullRequest, error) {
+	// Build GitHub API URL
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls?state=open&per_page=100", owner, repo)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response (array of PRs)
+	var rawPRs []map[string]interface{}
+	if err := json.Unmarshal(body, &rawPRs); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Convert to PullRequest structs
+	prs := make([]*PullRequest, 0, len(rawPRs))
+	for _, rawPR := range rawPRs {
+		pr := &PullRequest{
+			Number: int(rawPR["number"].(float64)),
+			State:  rawPR["state"].(string),
+			Title:  rawPR["title"].(string),
+		}
+
+		// Extract optional fields
+		if merged, ok := rawPR["merged"].(bool); ok {
+			pr.Merged = merged
+		}
+		if draft, ok := rawPR["draft"].(bool); ok {
+			pr.Draft = draft
+		}
+		if additions, ok := rawPR["additions"].(float64); ok {
+			pr.Additions = int(additions)
+		}
+		if deletions, ok := rawPR["deletions"].(float64); ok {
+			pr.Deletions = int(deletions)
+		}
+		if body, ok := rawPR["body"].(string); ok {
+			pr.Body = body
+		}
+
+		// Extract head SHA and branch
+		if head, ok := rawPR["head"].(map[string]interface{}); ok {
+			if sha, ok := head["sha"].(string); ok {
+				pr.HeadSHA = sha
+			}
+			if ref, ok := head["ref"].(string); ok {
+				pr.HeadBranch = ref
+			}
+		}
+
+		prs = append(prs, pr)
+	}
+
+	return prs, nil
 }
 
 // ListPRComments fetches all comments on a pull request.
