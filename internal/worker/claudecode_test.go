@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -100,6 +101,65 @@ func (m *mockBackend) Name() string {
 
 func (m *mockBackend) Models() []string {
 	return m.models
+}
+
+// mockWorkspace implements workspaceProvider for testing — no filesystem or git calls.
+type mockWorkspace struct {
+	prepareFunc    func(ctx context.Context, task *taskqueue.Task) (string, error)
+	prepareFixFunc func(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+func newMockWorkspace(dir string) *mockWorkspace {
+	return &mockWorkspace{
+		prepareFunc: func(_ context.Context, _ *taskqueue.Task) (string, error) {
+			return dir, nil
+		},
+		prepareFixFunc: func(_ context.Context, _ *taskqueue.Task) (string, error) {
+			return dir, nil
+		},
+	}
+}
+
+func (m *mockWorkspace) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	return m.prepareFunc(ctx, task)
+}
+
+func (m *mockWorkspace) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	return m.prepareFixFunc(ctx, task)
+}
+
+// mockQualityGate implements qualityValidator for testing — no subprocess calls.
+type mockQualityGate struct {
+	validateFunc func(ctx context.Context, workspaceDir string, ruleset *conventions.Ruleset) error
+}
+
+func newMockQualityGate(err error) *mockQualityGate {
+	return &mockQualityGate{
+		validateFunc: func(_ context.Context, _ string, _ *conventions.Ruleset) error {
+			return err
+		},
+	}
+}
+
+func (m *mockQualityGate) Validate(ctx context.Context, workspaceDir string, ruleset *conventions.Ruleset) error {
+	return m.validateFunc(ctx, workspaceDir, ruleset)
+}
+
+// newTestWorker builds a ClaudeCodeWorker with injected mocks for hermetic tests.
+func newTestWorker(
+	queue *mockQueue,
+	backend *mockBackend,
+	workspace *mockWorkspace,
+	gate *mockQualityGate,
+) *ClaudeCodeWorker {
+	return &ClaudeCodeWorker{
+		id:           "worker-1",
+		tier:         taskqueue.TierClaude,
+		queue:        queue,
+		backend:      backend,
+		workspaceMgr: workspace,
+		qualityGate:  gate,
+	}
 }
 
 // TestNewClaudeCodeWorker tests worker initialization.
@@ -206,13 +266,15 @@ func TestClaim(t *testing.T) {
 	}
 }
 
-// TestExecute tests task execution with mocked backend.
+// TestExecute tests task execution with injected mockWorkspace and mockQualityGate —
+// no real git, filesystem, or subprocess calls are made.
 func TestExecute(t *testing.T) {
 	tests := []struct {
 		name        string
 		task        *taskqueue.Task
 		executeFunc func(ctx context.Context, prompt string, model string) (string, error)
 		updateFunc  func(ctx context.Context, task *taskqueue.Task) error
+		gateErr     error // error the mock quality gate returns (nil = pass)
 		wantSuccess bool
 		wantBranch  string
 		wantPR      int
@@ -235,6 +297,7 @@ func TestExecute(t *testing.T) {
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
 			},
+			gateErr:     nil,
 			wantSuccess: true,
 			wantBranch:  "feature/KAI-123-add-feature",
 			wantPR:      456,
@@ -257,6 +320,7 @@ func TestExecute(t *testing.T) {
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
 			},
+			gateErr:     nil,
 			wantSuccess: false,
 			wantBranch:  "",
 			wantPR:      0,
@@ -279,6 +343,30 @@ func TestExecute(t *testing.T) {
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
 			},
+			gateErr:     nil,
+			wantSuccess: false,
+			wantBranch:  "",
+			wantPR:      0,
+		},
+		{
+			name: "quality gate failure",
+			task: &taskqueue.Task{
+				ID:          "task-4",
+				IssueNumber: 126,
+				RepoOwner:   "owner",
+				RepoName:    "repo",
+				Title:       "Bad code",
+				Description: "Introduces failing tests",
+				Status:      taskqueue.StatusClaimed,
+				WorkerID:    "worker-1",
+			},
+			executeFunc: func(ctx context.Context, prompt string, model string) (string, error) {
+				return "Done.\nBranch: feature/issue-126-bad-code\nPR: #200", nil
+			},
+			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
+				return nil
+			},
+			gateErr:     fmt.Errorf("tests failed: 1 test failed"),
 			wantSuccess: false,
 			wantBranch:  "",
 			wantPR:      0,
@@ -292,7 +380,10 @@ func TestExecute(t *testing.T) {
 			backend := newMockBackend("test-backend", []string{"test-model"})
 			backend.executeFunc = tt.executeFunc
 
-			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			workspace := newMockWorkspace("/tmp/test-workspace")
+			gate := newMockQualityGate(tt.gateErr)
+
+			worker := newTestWorker(queue, backend, workspace, gate)
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
@@ -586,7 +677,7 @@ type testRuleset struct {
 }
 
 // buildPromptForTest is a test helper that builds a prompt with a simple ruleset.
-func buildPromptForTest(w *ClaudeCodeWorker, task *taskqueue.Task, ruleset *testRuleset) string {
+func buildPromptForTest(_ *ClaudeCodeWorker, task *taskqueue.Task, ruleset *testRuleset) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")

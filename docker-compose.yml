@@ -1,0 +1,41 @@
+version: "3.9"
+
+# Named volumes persist task state and worker workspaces across restarts.
+volumes:
+  tasks:
+  workspaces:
+
+services:
+  supervisor:
+    build:
+      context: .
+      target: supervisor
+    restart: unless-stopped
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    volumes:
+      - tasks:/tasks
+      - workspaces:/workspaces
+      - ./orchestrator.yml:/orchestrator.yml:ro
+    command: ["--config", "/orchestrator.yml"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # The hunter service is opt-in: start it with `docker compose --profile hunt up`.
+  hunter:
+    build:
+      context: .
+      target: hunter
+    profiles:
+      - hunt
+    environment:
+      SAM_API_KEY: ${SAM_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
