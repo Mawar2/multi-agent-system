@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build supervisor
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build \
+            -ldflags="-X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o bin/supervisor-${{ matrix.os }}-${{ matrix.arch }} \
+            ./cmd/supervisor
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-${{ matrix.os }}-${{ matrix.arch }}
+          path: bin/supervisor-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bin/
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/supervisor-*
+          generate_release_notes: true
+
+  deploy-production:
+    name: Deploy to Production
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download linux/amd64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: supervisor-linux-amd64
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/supervisor-linux-amd64
+
+      - name: Stop supervisor on production
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            sudo systemctl stop supervisor || true
+            mkdir -p ~/multi-agent-system/bin
+
+      - name: Copy binary to production
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          source: bin/supervisor-linux-amd64
+          target: ~/multi-agent-system/bin/
+
+      - name: Start supervisor on production
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            mv ~/multi-agent-system/bin/supervisor-linux-amd64 ~/multi-agent-system/bin/supervisor
+            chmod +x ~/multi-agent-system/bin/supervisor
+            sudo systemctl start supervisor
