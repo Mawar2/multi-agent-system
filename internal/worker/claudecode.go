@@ -12,6 +12,19 @@ import (
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
+// workspaceProvider abstracts workspace lifecycle so tests can inject fakes
+// without touching the real filesystem or git.
+type workspaceProvider interface {
+	PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error)
+	PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+// qualityValidator abstracts pre-PR quality checks so tests can inject fakes
+// without shelling out to real test/lint/format tools.
+type qualityValidator interface {
+	Validate(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error
+}
+
 // ClaudeCodeWorker is a worker implementation that uses Claude Code CLI to complete tasks.
 // It claims tasks from the queue, parses project conventions, and uses the LLM backend
 // to implement solutions following project rules.
@@ -19,15 +32,16 @@ import (
 // Phase 1: Uses Claude Code CLI as the backend (local, free)
 // Phase 2+: Can use other backends (Antigravity, Vertex AI) via LLMBackend abstraction
 type ClaudeCodeWorker struct {
-	id              string               // Unique worker identifier
-	tier            taskqueue.Tier       // Worker tier (determines which tasks to claim)
-	queue           taskqueue.TaskQueue  // Queue to claim tasks from
-	backend         llm.LLMBackend       // LLM backend for code generation
-	workspaceRoot   string               // Root directory for isolated workspaces
-	workspaceMgr    *WorkspaceManager    // Manages cloning and updating target repos
-	tasksCompleted  int                  // Number of tasks successfully completed
-	tasksFailed     int                  // Number of tasks failed
-	mu              sync.Mutex           // Protects stats (tasksCompleted, tasksFailed)
+	id             string              // Unique worker identifier
+	tier           taskqueue.Tier      // Worker tier (determines which tasks to claim)
+	queue          taskqueue.TaskQueue // Queue to claim tasks from
+	backend        llm.LLMBackend      // LLM backend for code generation
+	workspaceRoot  string              // Root directory for isolated workspaces
+	workspaceMgr   workspaceProvider   // Manages cloning and updating target repos
+	qualityGate    qualityValidator    // Pre-PR quality validation
+	tasksCompleted int                 // Number of tasks successfully completed
+	tasksFailed    int                 // Number of tasks failed
+	mu             sync.Mutex          // Protects stats (tasksCompleted, tasksFailed)
 }
 
 // NewClaudeCodeWorker creates a new ClaudeCodeWorker instance.
@@ -48,12 +62,13 @@ func NewClaudeCodeWorker(
 	workspaceRoot string,
 ) *ClaudeCodeWorker {
 	return &ClaudeCodeWorker{
-		id:            id,
-		tier:          tier,
-		queue:         queue,
-		backend:       backend,
-		workspaceRoot: workspaceRoot,
-		workspaceMgr:  NewWorkspaceManager(workspaceRoot, id),
+		id:             id,
+		tier:           tier,
+		queue:          queue,
+		backend:        backend,
+		workspaceRoot:  workspaceRoot,
+		workspaceMgr:   NewWorkspaceManager(workspaceRoot, id),
+		qualityGate:    NewQualityGates(),
 		tasksCompleted: 0,
 		tasksFailed:    0,
 	}
@@ -85,8 +100,9 @@ func (w *ClaudeCodeWorker) Claim(ctx context.Context) (*taskqueue.Task, error) {
 //  3. Build detailed LLM prompt with task details and conventions
 //  4. Call backend.Execute to get implementation from LLM (runs in workspace)
 //  5. Parse response for branch name and PR number
-//  6. Update task status to Review
-//  7. Return Result with success status
+//  6. Run quality gates before accepting PR
+//  7. Update task status to Review
+//  8. Return Result with success status
 //
 // If any step fails, returns a Result with success=false and error details.
 func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*Result, error) {
@@ -161,8 +177,7 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 	// Step 6: Run quality gates BEFORE accepting PR
 	// This prevents low-quality PRs that would fail AI review and waste costs
 	fmt.Printf("[Worker %s] Running quality gates before accepting PR...\n", w.id)
-	gates := NewQualityGates(workspaceDir)
-	if err := gates.Validate(ctx, ruleset); err != nil {
+	if err := w.qualityGate.Validate(ctx, ruleset, workspaceDir); err != nil {
 		// Quality checks failed - reject the work, do not create/accept PR
 		return w.failResult(task, fmt.Errorf("quality gates failed: %w", err)), nil
 	}

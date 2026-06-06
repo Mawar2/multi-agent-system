@@ -1,0 +1,18 @@
+# Generated artefacts
+tasks/
+projects/
+bin/
+
+# Version control
+.git/
+.gitignore
+
+# Documentation (not needed in build context)
+docs/
+*.md
+
+# Local config (mounted as volume at runtime)
+orchestrator.yml
+
+# Development tooling
+.claude/
