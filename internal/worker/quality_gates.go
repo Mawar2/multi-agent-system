@@ -71,6 +71,26 @@ func (qg *QualityGates) Validate(ctx context.Context, ruleset *conventions.Rules
 	return nil
 }
 
+// noTargets reports whether a tool's output indicates there was simply nothing
+// to check (e.g. the default `go test ./...`/`golangci-lint run` ran in a repo
+// with no Go packages). That is a "nothing to validate" outcome, not a quality
+// failure — without this, the default Go commands false-fail on non-Go or empty
+// repos even when the change itself is fine.
+func noTargets(output string) bool {
+	o := strings.ToLower(output)
+	for _, marker := range []string{
+		"no packages to test",
+		"matched no packages",
+		"no go files",
+		"no such file or directory", // command itself absent for this project type
+	} {
+		if strings.Contains(o, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // runTests executes the project's test command and verifies all tests pass.
 func (qg *QualityGates) runTests(ctx context.Context, ruleset *conventions.Ruleset) error {
 	fmt.Printf("[QualityGates] Running tests: %s\n", ruleset.TestCommand)
@@ -80,6 +100,10 @@ func (qg *QualityGates) runTests(ctx context.Context, ruleset *conventions.Rules
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if noTargets(string(output)) {
+			fmt.Printf("[QualityGates] ✅ No test targets in this repo — skipping test gate\n")
+			return nil
+		}
 		return fmt.Errorf("tests failed: %w\nOutput:\n%s", err, string(output))
 	}
 
@@ -96,6 +120,10 @@ func (qg *QualityGates) runLinter(ctx context.Context, ruleset *conventions.Rule
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if noTargets(string(output)) {
+			fmt.Printf("[QualityGates] ✅ No lint targets in this repo — skipping linter gate\n")
+			return nil
+		}
 		return fmt.Errorf("linter found issues: %w\nOutput:\n%s", err, string(output))
 	}
 

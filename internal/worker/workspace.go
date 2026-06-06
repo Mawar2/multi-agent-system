@@ -26,7 +26,7 @@ type WorkspaceManager struct {
 // hangs the worker. With these env vars git fails fast instead, and when the
 // gh credential helper is configured (gh auth setup-git) auth succeeds outright.
 func gitCmd(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := gitCmd(ctx,args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0", // never prompt for credentials on the terminal
 		"GCM_INTERACTIVE=never", // Git Credential Manager: never show a UI prompt
@@ -106,19 +106,19 @@ func (wm *WorkspaceManager) PrepareWorkspaceForFix(ctx context.Context, task *ta
 		task.PRNumber, task.BranchName)
 
 	// Fetch latest changes from remote
-	fetchCmd := gitCmd(ctx,"-C", workspaceDir, "fetch", "origin")
+	fetchCmd := gitCmd(ctx, "-C", workspaceDir, "fetch", "origin")
 	if err := fetchCmd.Run(); err != nil {
 		return "", fmt.Errorf("git fetch failed: %w", err)
 	}
 
 	// Checkout the existing branch
-	checkoutCmd := gitCmd(ctx,"-C", workspaceDir, "checkout", task.BranchName)
+	checkoutCmd := gitCmd(ctx, "-C", workspaceDir, "checkout", task.BranchName)
 	if output, err := checkoutCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git checkout %s failed: %w\nOutput: %s", task.BranchName, err, output)
 	}
 
 	// Pull latest changes from the branch
-	pullCmd := gitCmd(ctx,"-C", workspaceDir, "pull", "origin", task.BranchName)
+	pullCmd := gitCmd(ctx, "-C", workspaceDir, "pull", "origin", task.BranchName)
 	if output, err := pullCmd.CombinedOutput(); err != nil {
 		// Pull may fail if branch doesn't exist on remote yet (first push)
 		// This is okay - we'll just work with local branch
@@ -138,7 +138,7 @@ func (wm *WorkspaceManager) cloneRepo(ctx context.Context, owner, repo, dest str
 
 	// Clone the repository
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-	cmd := gitCmd(ctx,"clone", repoURL, dest)
+	cmd := gitCmd(ctx, "clone", repoURL, dest)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -153,13 +153,13 @@ func (wm *WorkspaceManager) cloneRepo(ctx context.Context, owner, repo, dest str
 // pullLatest pulls the latest changes from the default branch.
 func (wm *WorkspaceManager) pullLatest(ctx context.Context, workspaceDir string) error {
 	// First, fetch all remotes
-	fetchCmd := gitCmd(ctx,"-C", workspaceDir, "fetch", "origin")
+	fetchCmd := gitCmd(ctx, "-C", workspaceDir, "fetch", "origin")
 	if err := fetchCmd.Run(); err != nil {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
 
 	// Get the default branch name
-	defaultBranchCmd := gitCmd(ctx,"-C", workspaceDir, "symbolic-ref", "refs/remotes/origin/HEAD", "--short")
+	defaultBranchCmd := gitCmd(ctx, "-C", workspaceDir, "symbolic-ref", "refs/remotes/origin/HEAD", "--short")
 	output, err := defaultBranchCmd.Output()
 	if err != nil {
 		// Fall back to "main" if we can't determine default branch
@@ -169,13 +169,13 @@ func (wm *WorkspaceManager) pullLatest(ctx context.Context, workspaceDir string)
 	defaultBranch = filepath.Base(defaultBranch) // Extract branch name from origin/main
 
 	// Checkout default branch
-	checkoutCmd := gitCmd(ctx,"-C", workspaceDir, "checkout", defaultBranch)
+	checkoutCmd := gitCmd(ctx, "-C", workspaceDir, "checkout", defaultBranch)
 	if err := checkoutCmd.Run(); err != nil {
 		return fmt.Errorf("git checkout failed: %w", err)
 	}
 
 	// Pull latest changes
-	pullCmd := gitCmd(ctx,"-C", workspaceDir, "pull", "origin", defaultBranch)
+	pullCmd := gitCmd(ctx, "-C", workspaceDir, "pull", "origin", defaultBranch)
 	if err := pullCmd.Run(); err != nil {
 		return fmt.Errorf("git pull failed: %w", err)
 	}
