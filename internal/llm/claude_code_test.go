@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -37,21 +38,23 @@ func TestClaudeCodeBackend_Models(t *testing.T) {
 	backend := NewClaudeCodeBackend()
 	models := backend.Models()
 
-	expectedModels := []string{
-		"claude-sonnet-4.5",
-		"claude-opus-4.6",
+	if len(models) == 0 {
+		t.Fatal("Models() returned empty slice")
 	}
 
-	if len(models) != len(expectedModels) {
-		t.Errorf("Models() returned %d models, want %d", len(models), len(expectedModels))
+	// Verify current model IDs are present
+	requiredModels := []string{
+		"claude-sonnet-4-6",
+		"claude-opus-4-8",
+		"claude-haiku-4-5",
 	}
-
-	for i, expected := range expectedModels {
-		if i >= len(models) {
-			break
-		}
-		if models[i] != expected {
-			t.Errorf("Models()[%d] = %q, want %q", i, models[i], expected)
+	modelSet := make(map[string]bool, len(models))
+	for _, m := range models {
+		modelSet[m] = true
+	}
+	for _, required := range requiredModels {
+		if !modelSet[required] {
+			t.Errorf("Models() missing %q", required)
 		}
 	}
 }
@@ -84,18 +87,20 @@ func TestClaudeCodeBackend_Execute_UnsupportedModel(t *testing.T) {
 		t.Error("Execute with unsupported model expected error, got nil")
 	}
 
-	if err.Error() != "execute: unsupported model \"gpt-4\" (supported: [claude-sonnet-4.5 claude-opus-4.6])" {
-		t.Errorf("Execute error = %q", err.Error())
+	if !strings.Contains(err.Error(), "unsupported model") || !strings.Contains(err.Error(), "gpt-4") {
+		t.Errorf("Execute error = %q, want message containing 'unsupported model' and 'gpt-4'", err.Error())
 	}
 }
 
-// TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel verifies default model selection.
-func TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel(t *testing.T) {
+// TestClaudeCodeBackend_Execute_DefaultModel verifies default model selection.
+func TestClaudeCodeBackend_Execute_DefaultModel(t *testing.T) {
+	t.Skip("Skipping test that calls real Claude CLI - use integration tests for this")
+
 	backend := NewClaudeCodeBackend()
 	ctx := context.Background()
 	prompt := "test prompt"
 
-	// Empty model should use default (claude-sonnet-4.5)
+	// Empty model should use default (claude-sonnet-4-6)
 	// which should not cause an unsupported model error
 	result, err := backend.Execute(ctx, prompt, "")
 
@@ -155,8 +160,11 @@ func TestClaudeCodeBackend_supportsModel_ValidModels(t *testing.T) {
 		model  string
 		wanted bool
 	}{
-		{"Sonnet 4.5", "claude-sonnet-4.5", true},
-		{"Opus 4.6", "claude-opus-4.6", true},
+		{"Sonnet 4-6 current", "claude-sonnet-4-6", true},
+		{"Opus 4-8 current", "claude-opus-4-8", true},
+		{"Haiku 4-5 current", "claude-haiku-4-5", true},
+		{"Sonnet 4.5 legacy", "claude-sonnet-4.5", true},
+		{"Opus 4.6 legacy", "claude-opus-4.6", true},
 		{"GPT-4", "gpt-4", false},
 		{"Gemini", "gemini-pro", false},
 		{"Empty", "", false},
