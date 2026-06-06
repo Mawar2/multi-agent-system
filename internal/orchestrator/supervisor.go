@@ -216,6 +216,11 @@ func (s *Supervisor) processIssue(ctx context.Context, issue *ticket.Issue) erro
 	return nil
 }
 
+// PollIssues is an exported wrapper around pollIssues for integration testing.
+func (s *Supervisor) PollIssues(ctx context.Context) error {
+	return s.pollIssues(ctx)
+}
+
 // monitorStalledTasks finds tasks that have been in progress too long and releases them.
 // A task is considered stalled if it has been Claimed or InProgress longer than the configured timeout.
 func (s *Supervisor) monitorStalledTasks(ctx context.Context) error {
