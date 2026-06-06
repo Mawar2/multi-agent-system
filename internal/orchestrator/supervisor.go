@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -144,14 +145,35 @@ func (s *Supervisor) pollIssues(ctx context.Context) error {
 func (s *Supervisor) processIssue(ctx context.Context, issue *ticket.Issue) error {
 	log.Printf("Supervisor: Processing issue #%d: %s", issue.Number, issue.Title)
 
-	// Check if issue already has a PR
-	prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
-	if err != nil {
-		log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
-		// Continue processing - treat as no PR
-	} else if prStatus != nil {
-		log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
-			issue.Number, prStatus.Number, prStatus.State)
+	// Apply smart issue filters for this repo.
+	issueFilter := s.config.IssueFilterForRepo(issue.RepoOwner, issue.RepoName)
+
+	// skip_if_has_pr (default: true) — skip issues that already have a PR.
+	if issueFilter.SkipIfHasPR == nil || *issueFilter.SkipIfHasPR {
+		prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
+		if err != nil {
+			log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
+			// Continue processing - treat as no PR
+		} else if prStatus != nil {
+			log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
+				issue.Number, prStatus.Number, prStatus.State)
+			return nil
+		}
+	}
+
+	// skip_labels — skip issues carrying any of the configured labels (case-insensitive).
+	for _, skipLabel := range issueFilter.SkipLabels {
+		for _, issueLabel := range issue.Labels {
+			if strings.EqualFold(issueLabel, skipLabel) {
+				log.Printf("Supervisor: Skipping issue #%d - has skip label %q", issue.Number, issueLabel)
+				return nil
+			}
+		}
+	}
+
+	// require_acceptance_criteria — skip issues with no "- [ ]" checklist items.
+	if issueFilter.RequireAcceptanceCriteria && !hasCheckboxItems(issue.Body) {
+		log.Printf("Supervisor: Skipping issue #%d - no acceptance criteria (- [ ] items)", issue.Number)
 		return nil
 	}
 
@@ -447,6 +469,11 @@ func (s *Supervisor) createFixTask(ctx context.Context, parentTask *taskqueue.Ta
 	}
 
 	return nil
+}
+
+// hasCheckboxItems reports whether body contains at least one markdown checkbox item ("- [ ]").
+func hasCheckboxItems(body string) bool {
+	return strings.Contains(body, "- [ ]")
 }
 
 // hasProcessedComment checks if a fix task already exists for this comment ID.
