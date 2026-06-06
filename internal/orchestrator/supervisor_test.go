@@ -737,3 +737,346 @@ func TestMaxIterationLimit(t *testing.T) {
 		t.Error("task with ReviewIteration=3 should trigger max iteration limit")
 	}
 }
+
+// --- Smart issue filtering tests ---
+
+// TestProcessIssue_SkipByLabel verifies that an issue carrying a skip label is not enqueued.
+func TestProcessIssue_SkipByLabel(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR: &f,
+					SkipLabels:  []string{"needs-human-design", "blocked"},
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    1,
+		Title:     "Redesign the auth flow",
+		Body:      "Full redesign needed",
+		Labels:    []string{"needs-human-design"},
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 0 {
+		t.Fatalf("expected 0 tasks enqueued (skip label hit), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_SkipLabelCaseInsensitive verifies label matching is case-insensitive.
+func TestProcessIssue_SkipLabelCaseInsensitive(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR: &f,
+					SkipLabels:  []string{"Blocked"},
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    2,
+		Title:     "Some task",
+		Body:      "Details",
+		Labels:    []string{"blocked"}, // lowercase — should still match "Blocked"
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 0 {
+		t.Fatalf("expected 0 tasks enqueued (case-insensitive skip label hit), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_AllowedLabelNotInSkipList verifies that an issue whose labels are NOT
+// in the skip list is still enqueued normally.
+func TestProcessIssue_AllowedLabelNotInSkipList(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR: &f,
+					SkipLabels:  []string{"blocked"},
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    3,
+		Title:     "Fix typo in docs",
+		Body:      "There is a typo",
+		Labels:    []string{"good-first-issue"},
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 1 {
+		t.Fatalf("expected 1 task enqueued (label not in skip list), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_SkipMissingAC verifies that an issue without checkboxes is skipped
+// when require_acceptance_criteria is true.
+func TestProcessIssue_SkipMissingAC(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR:               &f,
+					RequireAcceptanceCriteria:  true,
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    4,
+		Title:     "Vague request",
+		Body:      "Please make it better", // no - [ ] items
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 0 {
+		t.Fatalf("expected 0 tasks enqueued (no AC), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_AllowWithAC verifies that an issue WITH checkboxes passes through
+// when require_acceptance_criteria is true.
+func TestProcessIssue_AllowWithAC(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR:               &f,
+					RequireAcceptanceCriteria:  true,
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    5,
+		Title:     "Well-defined task",
+		Body:      "## Acceptance Criteria\n- [ ] The widget is red\n- [ ] Tests pass",
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 1 {
+		t.Fatalf("expected 1 task enqueued (has AC), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_ACNotRequired verifies that an issue without checkboxes still passes
+// when require_acceptance_criteria is false (the default).
+func TestProcessIssue_ACNotRequired(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR:               &f,
+					RequireAcceptanceCriteria:  false,
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    6,
+		Title:     "Simple fix",
+		Body:      "Just fix the typo", // no checkboxes
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	if len(queue.enqueuedTasks) != 1 {
+		t.Fatalf("expected 1 task enqueued (AC not required), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestProcessIssue_SkipIfHasPRFalse verifies that the PR check is skipped
+// when skip_if_has_pr is explicitly set to false.
+func TestProcessIssue_SkipIfHasPRFalse(t *testing.T) {
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "test-project",
+				RepoOwner: "testowner",
+				RepoName:  "testrepo",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR: &f, // explicitly false — don't skip even if PR exists
+				},
+			},
+		},
+	}
+	queue := NewMockTaskQueue()
+	router := NewRuleBasedRouter()
+	ticketClient := NewMockTicketClient([]*ticket.Issue{})
+
+	// Simulate an existing PR for issue 7.
+	ticketClient.SetPRStatus(7, &ticket.PRStatus{
+		Number:  100,
+		State:   "open",
+		HTMLURL: "https://github.com/testowner/testrepo/pull/100",
+		Merged:  false,
+	})
+
+	supervisor := NewSupervisor(config, queue, router, ticketClient)
+
+	issue := &ticket.Issue{
+		Number:    7,
+		Title:     "Add feature",
+		Body:      "Description",
+		RepoOwner: "testowner",
+		RepoName:  "testrepo",
+	}
+
+	if err := supervisor.processIssue(context.Background(), issue); err != nil {
+		t.Fatalf("processIssue failed: %v", err)
+	}
+	// Should be enqueued because skip_if_has_pr is false.
+	if len(queue.enqueuedTasks) != 1 {
+		t.Fatalf("expected 1 task enqueued (skip_if_has_pr=false bypasses PR check), got %d", len(queue.enqueuedTasks))
+	}
+}
+
+// TestIssueFilterForRepo verifies that the correct filter is returned per repo
+// and that unknown repos receive safe defaults.
+func TestIssueFilterForRepo(t *testing.T) {
+	tr := true
+	f := false
+	config := &Config{
+		Projects: []ProjectConfig{
+			{
+				Name:      "project-a",
+				RepoOwner: "ownerA",
+				RepoName:  "repoA",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR: &f,
+					SkipLabels:  []string{"blocked"},
+				},
+			},
+			{
+				Name:      "project-b",
+				RepoOwner: "ownerB",
+				RepoName:  "repoB",
+				IssueFilter: IssueFilterConfig{
+					SkipIfHasPR:               &tr,
+					RequireAcceptanceCriteria:  true,
+				},
+			},
+		},
+	}
+
+	// project-a filter
+	fa := config.IssueFilterForRepo("ownerA", "repoA")
+	if fa.SkipIfHasPR == nil || *fa.SkipIfHasPR != false {
+		t.Error("expected SkipIfHasPR=false for project-a")
+	}
+	if len(fa.SkipLabels) != 1 || fa.SkipLabels[0] != "blocked" {
+		t.Errorf("expected SkipLabels=[blocked] for project-a, got %v", fa.SkipLabels)
+	}
+
+	// project-b filter
+	fb := config.IssueFilterForRepo("ownerB", "repoB")
+	if fb.SkipIfHasPR == nil || *fb.SkipIfHasPR != true {
+		t.Error("expected SkipIfHasPR=true for project-b")
+	}
+	if !fb.RequireAcceptanceCriteria {
+		t.Error("expected RequireAcceptanceCriteria=true for project-b")
+	}
+
+	// unknown repo — safe defaults
+	fd := config.IssueFilterForRepo("unknown", "repo")
+	if fd.SkipIfHasPR == nil || !*fd.SkipIfHasPR {
+		t.Error("expected SkipIfHasPR=true (safe default) for unknown repo")
+	}
+	if fd.RequireAcceptanceCriteria {
+		t.Error("expected RequireAcceptanceCriteria=false (safe default) for unknown repo")
+	}
+	if len(fd.SkipLabels) != 0 {
+		t.Errorf("expected no SkipLabels (safe default) for unknown repo, got %v", fd.SkipLabels)
+	}
+
+	// Case-insensitivity of lookup
+	fi := config.IssueFilterForRepo("OWNERA", "REPOA")
+	if fi.SkipIfHasPR == nil || *fi.SkipIfHasPR != false {
+		t.Error("expected IssueFilterForRepo lookup to be case-insensitive")
+	}
+}
