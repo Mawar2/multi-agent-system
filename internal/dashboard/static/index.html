@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Agent System Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  header { background: #1e293b; border-bottom: 1px solid #334155; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1.25rem; font-weight: 600; color: #f8fafc; }
+  .badge { font-size: 0.7rem; background: #22c55e; color: #fff; padding: 0.15rem 0.5rem; border-radius: 9999px; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+  /* Stats row */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+  .stat-card { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 1.25rem; }
+  .stat-card .label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .stat-card .value { font-size: 2rem; font-weight: 700; color: #f8fafc; }
+  .stat-card .sub { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; }
+
+  /* Queue bar */
+  .section { margin-bottom: 2rem; }
+  .section h2 { font-size: 0.875rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+  .queue-bar { height: 1.5rem; border-radius: 0.5rem; overflow: hidden; display: flex; background: #1e293b; }
+  .queue-bar .seg { transition: width 0.3s ease; }
+  .seg-pending     { background: #3b82f6; }
+  .seg-claimed     { background: #a855f7; }
+  .seg-in_progress { background: #f59e0b; }
+  .seg-review      { background: #06b6d4; }
+  .seg-complete    { background: #22c55e; }
+  .seg-failed      { background: #ef4444; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
+  .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* Workers grid */
+  .workers { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.75rem; }
+  .worker-card { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .worker-header { display: flex; align-items: center; gap: 0.5rem; }
+  .health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dot-ok  { background: #22c55e; }
+  .dot-err { background: #ef4444; }
+  .worker-id { font-size: 0.875rem; font-weight: 600; color: #f8fafc; }
+  .worker-tier { font-size: 0.7rem; color: #64748b; background: #334155; padding: 0.1rem 0.4rem; border-radius: 4px; }
+  .worker-stats { font-size: 0.75rem; color: #94a3b8; }
+
+  /* Tasks table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th, td { padding: 0.625rem 1rem; text-align: left; border-bottom: 1px solid #1e293b; }
+  thead tr { background: #1e293b; color: #94a3b8; }
+  th { cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { color: #f8fafc; }
+  tbody tr:hover { background: #1e293b55; }
+  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
+  .pill-pending     { background: #1d4ed8; color: #bfdbfe; }
+  .pill-claimed     { background: #6b21a8; color: #e9d5ff; }
+  .pill-in_progress { background: #92400e; color: #fef3c7; }
+  .pill-review      { background: #164e63; color: #cffafe; }
+  .pill-complete    { background: #14532d; color: #bbf7d0; }
+  .pill-failed      { background: #7f1d1d; color: #fecaca; }
+
+  .refresh-note { font-size: 0.75rem; color: #475569; text-align: right; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Multi-Agent System</h1>
+  <span class="badge" id="live-badge">LIVE</span>
+</header>
+<div class="container">
+  <!-- Stats row -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Success Rate</div>
+      <div class="value" id="stat-success">—</div>
+      <div class="sub">complete / (complete + failed)</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">In Queue</div>
+      <div class="value" id="stat-pending">—</div>
+      <div class="sub">pending tasks</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">In Progress</div>
+      <div class="value" id="stat-inprogress">—</div>
+      <div class="sub">active workers</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">QG Failures</div>
+      <div class="value" id="stat-qgfail">—</div>
+      <div class="sub">quality-gate blocked</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Est. Savings</div>
+      <div class="value" id="stat-savings">—</div>
+      <div class="sub">from quality gates</div>
+    </div>
+  </div>
+
+  <!-- Queue breakdown -->
+  <div class="section">
+    <h2>Queue Breakdown</h2>
+    <div class="queue-bar" id="queue-bar"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot seg-pending"></div> Pending</div>
+      <div class="legend-item"><div class="legend-dot seg-claimed"></div> Claimed</div>
+      <div class="legend-item"><div class="legend-dot seg-in_progress"></div> In Progress</div>
+      <div class="legend-item"><div class="legend-dot seg-review"></div> Review</div>
+      <div class="legend-item"><div class="legend-dot seg-complete"></div> Complete</div>
+      <div class="legend-item"><div class="legend-dot seg-failed"></div> Failed</div>
+    </div>
+  </div>
+
+  <!-- Workers -->
+  <div class="section">
+    <h2>Workers</h2>
+    <div class="workers" id="workers-grid"></div>
+  </div>
+
+  <!-- Tasks table -->
+  <div class="section">
+    <h2>Recent Tasks</h2>
+    <div class="table-wrap">
+      <table id="tasks-table">
+        <thead>
+          <tr>
+            <th onclick="sortBy('issue_number')">Issue #</th>
+            <th onclick="sortBy('title')">Title</th>
+            <th onclick="sortBy('status')">Status</th>
+            <th onclick="sortBy('tier')">Tier</th>
+            <th onclick="sortBy('worker_id')">Worker</th>
+            <th onclick="sortBy('attempts')">Attempts</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+    </div>
+    <div class="refresh-note" id="refresh-note">Refreshing every 5 s</div>
+  </div>
+</div>
+
+<script>
+  const STATUS_ORDER = ['pending','claimed','in_progress','review','complete','failed'];
+  let tasks = [];
+  let sortKey = 'issue_number';
+  let sortAsc = false;
+
+  function fmt(n) { return n != null ? String(n) : '—'; }
+
+  async function fetchStatus() {
+    try {
+      const r = await fetch('/api/status');
+      const d = await r.json();
+
+      // Stats
+      document.getElementById('stat-success').textContent =
+        d.success_rate != null ? d.success_rate.toFixed(1) + '%' : '—';
+      document.getElementById('stat-pending').textContent =
+        fmt(d.queue_counts && d.queue_counts.pending);
+      document.getElementById('stat-inprogress').textContent =
+        fmt(d.queue_counts && d.queue_counts.in_progress);
+      document.getElementById('stat-qgfail').textContent = fmt(d.quality_gate_failures);
+      document.getElementById('stat-savings').textContent =
+        d.estimated_savings_usd != null ? '$' + d.estimated_savings_usd.toFixed(2) : '—';
+
+      // Queue bar
+      const counts = d.queue_counts || {};
+      const total = STATUS_ORDER.reduce((s, k) => s + (counts[k] || 0), 0);
+      const bar = document.getElementById('queue-bar');
+      bar.innerHTML = '';
+      if (total > 0) {
+        STATUS_ORDER.forEach(k => {
+          const pct = ((counts[k] || 0) / total * 100).toFixed(2);
+          if (pct > 0) {
+            const seg = document.createElement('div');
+            seg.className = 'seg seg-' + k;
+            seg.style.width = pct + '%';
+            seg.title = k + ': ' + (counts[k] || 0);
+            bar.appendChild(seg);
+          }
+        });
+      }
+
+      // Workers
+      const grid = document.getElementById('workers-grid');
+      grid.innerHTML = '';
+      (d.workers || []).forEach(w => {
+        const card = document.createElement('div');
+        card.className = 'worker-card';
+        card.innerHTML = `
+          <div class="worker-header">
+            <div class="health-dot ${w.healthy ? 'dot-ok' : 'dot-err'}"></div>
+            <span class="worker-id">${w.id}</span>
+          </div>
+          <span class="worker-tier">${w.tier}</span>
+          <div class="worker-stats">
+            ✅ ${w.tasks_completed} &nbsp; ❌ ${w.tasks_failed}
+          </div>`;
+        grid.appendChild(card);
+      });
+    } catch (e) {
+      console.error('status fetch failed', e);
+    }
+  }
+
+  async function fetchTasks() {
+    try {
+      const r = await fetch('/api/tasks');
+      tasks = await r.json();
+      renderTable();
+    } catch (e) {
+      console.error('tasks fetch failed', e);
+    }
+  }
+
+  function sortBy(key) {
+    if (sortKey === key) { sortAsc = !sortAsc; } else { sortKey = key; sortAsc = true; }
+    renderTable();
+  }
+
+  function renderTable() {
+    const sorted = [...tasks].sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortAsc ? cmp : -cmp;
+    });
+    const body = document.getElementById('tasks-body');
+    body.innerHTML = sorted.map(t => `
+      <tr>
+        <td>${t.issue_number || '—'}</td>
+        <td>${t.title ? t.title.slice(0, 60) : '—'}</td>
+        <td><span class="pill pill-${t.status}">${t.status}</span></td>
+        <td>${t.tier != null ? ['gemini-flash','gemini-pro','claude'][t.tier] || t.tier : '—'}</td>
+        <td>${t.worker_id || '—'}</td>
+        <td>${t.attempts != null ? t.attempts : '—'}</td>
+      </tr>`).join('');
+  }
+
+  function refresh() {
+    fetchStatus();
+    fetchTasks();
+    document.getElementById('refresh-note').textContent =
+      'Last updated ' + new Date().toLocaleTimeString() + ' · refreshing every 5 s';
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

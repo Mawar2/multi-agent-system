@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/dashboard"
 	"github.com/Mawar2/multi-agent-system/internal/llm"
 	"github.com/Mawar2/multi-agent-system/internal/orchestrator"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -19,6 +20,7 @@ import (
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "orchestrator.yml", "Path to configuration file")
+	dashboardAddr := flag.String("dashboard-addr", ":8080", "Dashboard listen address (empty to disable)")
 	flag.Parse()
 
 	// Load configuration
@@ -53,6 +55,17 @@ func main() {
 	fmt.Println("Initializing worker pools...")
 	workers := initializeWorkers(config, queue)
 	fmt.Printf("Started %d workers\n", len(workers))
+
+	// Start observability dashboard
+	if *dashboardAddr != "" {
+		srv := dashboard.NewServer(queue, workers)
+		go func() {
+			fmt.Printf("Dashboard listening on http://%s\n", *dashboardAddr)
+			if err := srv.ListenAndServe(*dashboardAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
+			}
+		}()
+	}
 
 	// Set up context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
