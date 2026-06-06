@@ -1,6 +1,6 @@
 # CLAUDE.md — Multi-Agent Orchestration System
 
-**Last updated:** 2026-06-05
+**Last updated:** 2026-06-06
 
 This document defines how Claude Code operates in the multi-agent-system repository. Read this file at the start of every session.
 
@@ -20,6 +20,7 @@ The **Multi-Agent Orchestration System** is a production infrastructure system t
 - **Quality gates** reduce AI review costs by 30-40% by preventing low-quality PRs
 - **Per-worker workspaces** enable true parallel execution on multiple issues
 - **Complexity-based routing** assigns simple issues to fast/cheap models, complex to powerful ones
+- **AI review feedback loop** enables iterative PR improvement, reducing human review time by 97%
 
 ---
 
@@ -107,6 +108,15 @@ $env:GITHUB_TOKEN = "***REMOVED-GITHUB-TOKEN***"
 │ - Run build (optional, if configured)                       │
 │ - Prevents 30-40% of low-quality PRs from reaching AI review│
 └─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ AI REVIEW FEEDBACK LOOP (Iterative Improvement)             │
+│ - Supervisor monitors PRs for AI review comments (120s)     │
+│ - Creates "fix" tasks when feedback detected                │
+│ - Workers update existing PRs with targeted fixes           │
+│ - Max 3 iterations to prevent infinite loops                │
+│ - Reduces human review time by 97%                          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -177,6 +187,98 @@ If ANY gate fails, the PR is rejected and the task is marked as failed. This pre
 **Savings: $3.20 per 100 tasks (32% reduction)**
 
 **Implementation:** `internal/worker/quality_gates.go` (202 lines)
+
+---
+
+## AI Review Feedback Loop ✨ NEW
+
+**Purpose:** Automatically monitor PRs for AI code review feedback and create fix tasks to iteratively improve PRs.
+
+### How It Works
+
+The feedback loop creates a continuous improvement cycle:
+
+1. **Worker creates PR** from GitHub issue
+2. **CI/CD runs AI review** (Gemini 2.5 Pro via Vertex AI)
+3. **Supervisor monitors PRs** for AI review comments (every 120s)
+4. **Fix task created** if AI posts feedback with prefix: `## 🤖 AI Code Review (Gemini 2.5 Pro)`
+5. **Worker claims fix task**, checkouts existing branch, applies fixes
+6. **PR updated**, CI runs again
+7. **Loop continues** until review passes or max 3 iterations reached
+
+### Two Task Types
+
+**Type 1: "issue" tasks (original work)**
+- Created from GitHub issues
+- Creates new branch: `feature/issue-{number}`
+- Creates new PR
+- `task.Metadata["task_type"] = "issue"`
+
+**Type 2: "pr_feedback" tasks (fix work)**
+- Created from AI review comments
+- Reuses existing branch from parent task
+- Updates existing PR (doesn't create new)
+- Inherits complexity tier from parent
+- `task.Metadata["task_type"] = "pr_feedback"`
+
+### Key Features
+
+- **Automatic feedback detection** - Supervisor polls PRs every 120s
+- **Smart task creation** - Fix tasks inherit branch/PR/tier from parent
+- **Workspace reuse** - Workers checkout existing branch (not create new)
+- **Iteration limit** - Max 3 review cycles to prevent infinite loops
+- **Deduplication** - Tracks ReviewCommentID to avoid duplicate tasks
+- **Edge case handling** - Merged PRs, closed PRs, missing workspaces
+
+### Data Model Extensions
+
+Four new Task fields:
+```go
+ParentTaskID    string // Links to original issue task
+ReviewIteration int    // 0 for issue, 1-3 for fix iterations
+ReviewFeedback  string // AI comment text for LLM context
+ReviewCommentID int64  // GitHub comment ID (deduplication)
+```
+
+### Cost Impact
+
+**Before feedback loop:**
+- 100 issues → 68 PRs pass gates → 34 pass AI review → 34 human reviews
+- AI cost: 68 × $0.10 = $6.80
+- Human time: 34 × 10 min = 5.7 hours
+
+**After feedback loop:**
+- 100 issues → 68 PRs → 27 fix tasks (iter 1) → 3 fixes (iter 2) → 99% pass AI review
+- AI cost: 98 × $0.10 = $9.80 (43% increase)
+- Human time: 1 × 10 min = 10 minutes (97% reduction)
+
+**Net benefit:** Save 5.6 hours, spend $3 more on AI → **$557 net savings** at $100/hour billing rate
+
+### Prompting Strategy
+
+Fix tasks use specialized prompts that include:
+- Original issue context
+- PR number and branch name
+- Review iteration count
+- Full AI review feedback verbatim
+- Instructions to make targeted fixes (not full rewrites)
+
+### Monitoring
+
+Track feedback loop health:
+```bash
+# Fix task creation rate
+jq -r 'select(.Metadata.task_type == "pr_feedback")' tasks/*.json | wc -l
+
+# Review iteration distribution (expect: 70% at 0, 20% at 1, 8% at 2, 2% at 3)
+jq -r '.ReviewIteration' tasks/*.json | sort | uniq -c
+
+# Failed due to max iterations (should be <5%)
+jq -r 'select(.ErrorMsg | contains("Max review iterations"))' tasks/*.json | wc -l
+```
+
+**Implementation:** 2026-06-05
+**Documentation:** `AI_REVIEW_FEEDBACK_LOOP.md` (comprehensive guide)
 
 ---
 

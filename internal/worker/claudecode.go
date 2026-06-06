@@ -97,12 +97,32 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 		return w.failResult(task, fmt.Errorf("failed to update task status: %w", err)), nil
 	}
 
-	// Step 1: Prepare workspace (clone or update target repo)
-	workspaceDir, err := w.workspaceMgr.PrepareWorkspace(ctx, task)
-	if err != nil {
-		return w.failResult(task, fmt.Errorf("failed to prepare workspace: %w", err)), nil
+	// Detect task type from metadata
+	taskType := task.Metadata["task_type"]
+	if taskType == "" {
+		taskType = "issue" // Default for legacy tasks
 	}
-	fmt.Printf("[Worker %s] Using workspace: %s\n", w.id, workspaceDir)
+
+	// Step 1: Prepare workspace based on task type
+	var workspaceDir string
+	var err error
+
+	if taskType == "pr_feedback" {
+		// Fix task: checkout existing branch
+		workspaceDir, err = w.workspaceMgr.PrepareWorkspaceForFix(ctx, task)
+		if err != nil {
+			return w.failResult(task, fmt.Errorf("failed to prepare workspace for fix: %w", err)), nil
+		}
+		fmt.Printf("[Worker %s] Using workspace for fix (PR #%d, branch %s): %s\n",
+			w.id, task.PRNumber, task.BranchName, workspaceDir)
+	} else {
+		// Issue task: create new branch
+		workspaceDir, err = w.workspaceMgr.PrepareWorkspace(ctx, task)
+		if err != nil {
+			return w.failResult(task, fmt.Errorf("failed to prepare workspace: %w", err)), nil
+		}
+		fmt.Printf("[Worker %s] Using workspace: %s\n", w.id, workspaceDir)
+	}
 
 	// Step 2: Parse project conventions from workspace
 	ruleset, err := conventions.ParseConventions(workspaceDir)
@@ -226,6 +246,18 @@ func (w *ClaudeCodeWorker) Tier() taskqueue.Tier {
 // 4. Create a pull request
 // 5. Report the branch name and PR number
 func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *conventions.Ruleset) string {
+	// Check task type
+	taskType := task.Metadata["task_type"]
+	if taskType == "" {
+		taskType = "issue"
+	}
+
+	// Build different prompts based on task type
+	if taskType == "pr_feedback" {
+		return w.buildFixPrompt(task, ruleset)
+	}
+
+	// Original issue task prompt
 	var sb strings.Builder
 
 	// Header
@@ -321,6 +353,80 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 	sb.WriteString("- Ensure tests pass before creating PR\n")
 	sb.WriteString("- Be thorough but concise in implementation\n")
 	sb.WriteString("- Focus on meeting acceptance criteria exactly\n")
+
+	return sb.String()
+}
+
+// buildFixPrompt constructs a prompt for fixing AI code review feedback.
+// This is used for pr_feedback tasks that address issues found by the AI reviewer.
+func (w *ClaudeCodeWorker) buildFixPrompt(task *taskqueue.Task, ruleset *conventions.Ruleset) string {
+	var sb strings.Builder
+
+	// Header
+	sb.WriteString("You are an autonomous code agent fixing AI code review feedback.\n\n")
+
+	// Task context
+	sb.WriteString("## CONTEXT\n\n")
+	fmt.Fprintf(&sb, "**Repository:** %s/%s\n", task.RepoOwner, task.RepoName)
+	fmt.Fprintf(&sb, "**Original Issue:** #%d - %s\n", task.IssueNumber, task.Title)
+	fmt.Fprintf(&sb, "**Pull Request:** #%d\n", task.PRNumber)
+	fmt.Fprintf(&sb, "**Branch:** %s (already checked out)\n", task.BranchName)
+	fmt.Fprintf(&sb, "**Review Iteration:** %d of 3\n\n", task.ReviewIteration)
+
+	// AI Review Feedback
+	sb.WriteString("## AI CODE REVIEW FEEDBACK\n\n")
+	sb.WriteString("The following issues were identified by the AI code reviewer:\n\n")
+	sb.WriteString(task.ReviewFeedback)
+	sb.WriteString("\n\n")
+
+	// Project conventions (abbreviated for fix tasks)
+	sb.WriteString("## PROJECT CONVENTIONS\n\n")
+	fmt.Fprintf(&sb, "**Test Command:** %s\n", ruleset.TestCommand)
+	fmt.Fprintf(&sb, "**Lint Command:** %s\n", ruleset.LintCommand)
+	fmt.Fprintf(&sb, "**Format Command:** %s\n\n", ruleset.FormatCommand)
+
+	// Implementation instructions
+	sb.WriteString("## INSTRUCTIONS\n\n")
+	sb.WriteString("Your task is to address ALL the issues identified in the AI review feedback above.\n\n")
+
+	sb.WriteString("Follow these steps:\n\n")
+
+	sb.WriteString("1. **Review the Feedback**\n")
+	sb.WriteString("   - Read each issue carefully\n")
+	sb.WriteString("   - Understand what needs to be fixed\n")
+	sb.WriteString("\n")
+
+	sb.WriteString("2. **Make Targeted Fixes**\n")
+	sb.WriteString("   - Address each issue identified by the reviewer\n")
+	sb.WriteString("   - Make minimal changes - fix only what was flagged\n")
+	sb.WriteString("   - Do NOT add new features or refactor unrelated code\n")
+	sb.WriteString("\n")
+
+	sb.WriteString("3. **Verify Your Changes**\n")
+	fmt.Fprintf(&sb, "   - Run tests: %s\n", ruleset.TestCommand)
+	fmt.Fprintf(&sb, "   - Run linter: %s\n", ruleset.LintCommand)
+	fmt.Fprintf(&sb, "   - Run formatter: %s\n", ruleset.FormatCommand)
+	sb.WriteString("   - Ensure all checks pass\n")
+	sb.WriteString("\n")
+
+	sb.WriteString("4. **Commit and Push**\n")
+	fmt.Fprintf(&sb, "   - Commit message: \"Fix AI review feedback (iteration %d)\"\n", task.ReviewIteration)
+	sb.WriteString("   - Push changes to update the existing PR\n")
+	sb.WriteString("\n")
+
+	sb.WriteString("5. **Report Results**\n")
+	sb.WriteString("   - In your response, include:\n")
+	fmt.Fprintf(&sb, "     Branch: %s\n", task.BranchName)
+	fmt.Fprintf(&sb, "     PR: #%d\n", task.PRNumber)
+	sb.WriteString("\n")
+
+	// Important notes
+	sb.WriteString("## IMPORTANT\n\n")
+	sb.WriteString("- This is a FIX task, not new feature implementation\n")
+	sb.WriteString("- The branch already exists - do NOT create a new branch\n")
+	sb.WriteString("- The PR already exists - push updates to the same PR\n")
+	sb.WriteString("- Focus ONLY on addressing the review feedback\n")
+	sb.WriteString("- All tests must pass before completing\n")
 
 	return sb.String()
 }

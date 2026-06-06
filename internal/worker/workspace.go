@@ -65,6 +65,56 @@ func (wm *WorkspaceManager) PrepareWorkspace(ctx context.Context, task *taskqueu
 	return workspaceDir, nil
 }
 
+// PrepareWorkspaceForFix prepares a workspace for fixing AI review feedback.
+// Unlike PrepareWorkspace, this method:
+// - Expects the workspace to already exist (from the parent task)
+// - Pulls latest changes from the remote branch
+// - Checks out the existing branch (does NOT create a new branch)
+//
+// This is used for pr_feedback tasks that update existing PRs.
+func (wm *WorkspaceManager) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	// Acquire per-worker-repo lock
+	lock := wm.getRepoLock(task.RepoOwner, task.RepoName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Workspace path: {rootDir}/{workerID}/{owner}/{repo}
+	workspaceDir := filepath.Join(wm.rootDir, wm.workerID, task.RepoOwner, task.RepoName)
+
+	// Check if workspace exists
+	if _, err := os.Stat(filepath.Join(workspaceDir, ".git")); os.IsNotExist(err) {
+		// Workspace doesn't exist - this shouldn't happen for fix tasks, but handle gracefully
+		fmt.Printf("[WorkspaceManager] Workspace doesn't exist for fix task, cloning...\n")
+		return wm.PrepareWorkspace(ctx, task)
+	}
+
+	fmt.Printf("[WorkspaceManager] Preparing workspace for fix - PR #%d, branch %s\n",
+		task.PRNumber, task.BranchName)
+
+	// Fetch latest changes from remote
+	fetchCmd := exec.CommandContext(ctx, "git", "-C", workspaceDir, "fetch", "origin")
+	if err := fetchCmd.Run(); err != nil {
+		return "", fmt.Errorf("git fetch failed: %w", err)
+	}
+
+	// Checkout the existing branch
+	checkoutCmd := exec.CommandContext(ctx, "git", "-C", workspaceDir, "checkout", task.BranchName)
+	if output, err := checkoutCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git checkout %s failed: %w\nOutput: %s", task.BranchName, err, output)
+	}
+
+	// Pull latest changes from the branch
+	pullCmd := exec.CommandContext(ctx, "git", "-C", workspaceDir, "pull", "origin", task.BranchName)
+	if output, err := pullCmd.CombinedOutput(); err != nil {
+		// Pull may fail if branch doesn't exist on remote yet (first push)
+		// This is okay - we'll just work with local branch
+		fmt.Printf("[WorkspaceManager] Pull failed (branch may not exist on remote yet): %s\n", output)
+	}
+
+	fmt.Printf("[WorkspaceManager] Ready for fix work in %s (branch: %s)\n", workspaceDir, task.BranchName)
+	return workspaceDir, nil
+}
+
 // cloneRepo clones a GitHub repository into the specified directory.
 func (wm *WorkspaceManager) cloneRepo(ctx context.Context, owner, repo, dest string) error {
 	// Create parent directory if it doesn't exist

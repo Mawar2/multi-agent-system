@@ -61,6 +61,10 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	pollTicker := time.NewTicker(pollInterval)
 	defer pollTicker.Stop()
 
+	// Monitor PRs for AI review feedback every 120 seconds
+	prTicker := time.NewTicker(120 * time.Second)
+	defer prTicker.Stop()
+
 	// Monitor stalled tasks every 30 seconds
 	monitorTicker := time.NewTicker(30 * time.Second)
 	defer monitorTicker.Stop()
@@ -88,6 +92,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			if err := s.pollIssues(ctx); err != nil {
 				log.Printf("Supervisor: Poll failed: %v", err)
 				// Continue loop on error - don't crash
+			}
+
+		case <-prTicker.C:
+			log.Println("Supervisor: Monitoring PRs for AI review feedback")
+			if err := s.monitorPRReviews(ctx); err != nil {
+				log.Printf("Supervisor: PR monitoring failed: %v", err)
+				// Continue loop on error
 			}
 
 		case <-monitorTicker.C:
@@ -173,19 +184,23 @@ func (s *Supervisor) processIssue(ctx context.Context, issue *ticket.Issue) erro
 
 	// Create task
 	task := &taskqueue.Task{
-		ID:          uuid.New().String(),
-		IssueNumber: issue.Number,
-		RepoOwner:   issue.RepoOwner,
-		RepoName:    issue.RepoName,
-		Title:       issue.Title,
-		Description: issue.Body,
-		Complexity:  complexity,
-		Tier:        tier,
-		Status:      taskqueue.StatusPending,
-		WorkerID:    "",
-		Attempts:    0,
-		Metadata:    make(map[string]string),
+		ID:              uuid.New().String(),
+		IssueNumber:     issue.Number,
+		RepoOwner:       issue.RepoOwner,
+		RepoName:        issue.RepoName,
+		Title:           issue.Title,
+		Description:     issue.Body,
+		Complexity:      complexity,
+		Tier:            tier,
+		Status:          taskqueue.StatusPending,
+		WorkerID:        "",
+		Attempts:        0,
+		ReviewIteration: 0, // Issue tasks start at iteration 0
+		Metadata:        make(map[string]string),
 	}
+
+	// Set task type to "issue" for original work
+	task.Metadata["task_type"] = "issue"
 
 	// Add labels to metadata
 	if len(issue.Labels) > 0 {
@@ -288,4 +303,167 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 		log.Println("Supervisor: Shutdown timeout exceeded")
 		return ctx.Err()
 	}
+}
+
+// monitorPRReviews checks tasks in Review status for AI review comments and creates fix tasks.
+func (s *Supervisor) monitorPRReviews(ctx context.Context) error {
+	// Get all tasks with Status == Review (PRs created, waiting for review)
+	reviewStatus := taskqueue.StatusReview
+	filter := &taskqueue.TaskFilter{Status: &reviewStatus}
+
+	tasks, err := s.queue.List(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to list review tasks: %w", err)
+	}
+
+	log.Printf("Supervisor: Found %d tasks in Review status", len(tasks))
+
+	for _, task := range tasks {
+		if err := s.checkPRForFeedback(ctx, task); err != nil {
+			log.Printf("Supervisor: Failed to check PR feedback for task %s (PR #%d): %v",
+				task.ID, task.PRNumber, err)
+			// Continue checking other tasks on error
+		}
+	}
+
+	return nil
+}
+
+// checkPRForFeedback checks a single task's PR for AI review feedback.
+func (s *Supervisor) checkPRForFeedback(ctx context.Context, task *taskqueue.Task) error {
+	// Task must have a PR number
+	if task.PRNumber == 0 {
+		return nil // No PR yet, skip
+	}
+
+	// Get GitHub REST client (need to cast from ticket.Client interface)
+	restClient, ok := s.ticketClient.(*ticket.GitHubRESTClient)
+	if !ok {
+		return fmt.Errorf("ticket client is not a GitHubRESTClient")
+	}
+
+	// Check if PR is still open
+	pr, err := restClient.GetPullRequest(ctx, task.RepoOwner, task.RepoName, task.PRNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get PR: %w", err)
+	}
+
+	// PR merged → mark task as complete
+	if pr.Merged {
+		log.Printf("Supervisor: PR #%d merged, marking task %s as complete", task.PRNumber, task.ID)
+		task.Status = taskqueue.StatusComplete
+		task.CompletedAt = time.Now()
+		if task.Metadata == nil {
+			task.Metadata = make(map[string]string)
+		}
+		task.Metadata["completion_reason"] = "pr_merged"
+		return s.queue.Update(ctx, task)
+	}
+
+	// PR closed without merging → mark task as failed
+	if pr.State == "closed" {
+		log.Printf("Supervisor: PR #%d closed without merging, marking task %s as failed", task.PRNumber, task.ID)
+		task.Status = taskqueue.StatusFailed
+		task.ErrorMsg = "PR closed without merging"
+		task.CompletedAt = time.Now()
+		return s.queue.Update(ctx, task)
+	}
+
+	// PR not open → skip
+	if pr.State != "open" {
+		return nil
+	}
+
+	// Get latest AI review comment
+	comment, err := restClient.GetLatestAIReviewComment(ctx, task.RepoOwner, task.RepoName, task.PRNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get AI review comment: %w", err)
+	}
+
+	// No AI review comment found
+	if comment == nil {
+		return nil
+	}
+
+	// Check if we've already processed this comment
+	if s.hasProcessedComment(ctx, comment.ID) {
+		return nil // Already created fix task for this comment
+	}
+
+	// Check iteration limit (max 3 review iterations)
+	if task.ReviewIteration >= 3 {
+		log.Printf("Supervisor: Max review iterations reached for task %s (PR #%d)", task.ID, task.PRNumber)
+		task.Status = taskqueue.StatusFailed
+		task.ErrorMsg = "Max review iterations (3) exceeded"
+		task.CompletedAt = time.Now()
+		return s.queue.Update(ctx, task)
+	}
+
+	// Create fix task
+	return s.createFixTask(ctx, task, comment, restClient)
+}
+
+// createFixTask creates a new pr_feedback task to address AI review comments.
+func (s *Supervisor) createFixTask(ctx context.Context, parentTask *taskqueue.Task, comment *ticket.PRComment, restClient *ticket.GitHubRESTClient) error {
+	// Parse feedback from comment
+	feedback := restClient.ParseAIReviewFeedback(comment)
+
+	// Create fix task
+	fixTask := &taskqueue.Task{
+		ID:              uuid.New().String(),
+		IssueNumber:     parentTask.IssueNumber,
+		RepoOwner:       parentTask.RepoOwner,
+		RepoName:        parentTask.RepoName,
+		Title:           fmt.Sprintf("Fix AI review feedback - %s", parentTask.Title),
+		Description:     feedback,
+		Complexity:      parentTask.Complexity, // Inherit complexity
+		Tier:            parentTask.Tier,        // Inherit tier
+		Status:          taskqueue.StatusPending,
+		BranchName:      parentTask.BranchName,  // Reuse existing branch!
+		PRNumber:        parentTask.PRNumber,    // Update existing PR!
+		ParentTaskID:    parentTask.ID,
+		ReviewIteration: parentTask.ReviewIteration + 1,
+		ReviewFeedback:  comment.Body,
+		ReviewCommentID: comment.ID,
+		Attempts:        0,
+		Metadata: map[string]string{
+			"task_type": "pr_feedback",
+		},
+	}
+
+	// Enqueue fix task
+	if err := s.queue.Enqueue(ctx, fixTask); err != nil {
+		return fmt.Errorf("failed to enqueue fix task: %w", err)
+	}
+
+	log.Printf("Supervisor: Created fix task %s for PR #%d (iteration %d)",
+		fixTask.ID, fixTask.PRNumber, fixTask.ReviewIteration)
+
+	// Mark parent task as complete (its work is done, fix task takes over)
+	parentTask.Status = taskqueue.StatusComplete
+	parentTask.CompletedAt = time.Now()
+	if err := s.queue.Update(ctx, parentTask); err != nil {
+		return fmt.Errorf("failed to update parent task: %w", err)
+	}
+
+	return nil
+}
+
+// hasProcessedComment checks if a fix task already exists for this comment ID.
+func (s *Supervisor) hasProcessedComment(ctx context.Context, commentID int64) bool {
+	// List all tasks
+	allTasks, err := s.queue.List(ctx, nil)
+	if err != nil {
+		log.Printf("Supervisor: Failed to list tasks for comment dedup: %v", err)
+		return false
+	}
+
+	// Check if any task has this ReviewCommentID
+	for _, task := range allTasks {
+		if task.ReviewCommentID == commentID {
+			return true
+		}
+	}
+
+	return false
 }

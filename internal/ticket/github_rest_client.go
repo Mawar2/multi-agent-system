@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,23 @@ import (
 type GitHubRESTClient struct {
 	token  string
 	client *http.Client
+}
+
+// PullRequest represents a GitHub pull request.
+type PullRequest struct {
+	Number  int    `json:"number"`
+	State   string `json:"state"` // "open", "closed"
+	Merged  bool   `json:"merged"`
+	Title   string `json:"title"`
+	HeadSHA string `json:"head_sha"`
+}
+
+// PRComment represents a comment on a pull request.
+type PRComment struct {
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	User      string    `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // NewGitHubRESTClient creates a new GitHub REST client using the GitHub API.
@@ -41,6 +60,67 @@ func (c *GitHubRESTClient) Call(ctx context.Context, tool string, params map[str
 	default:
 		return nil, fmt.Errorf("unsupported tool: %s", tool)
 	}
+}
+
+// FetchIssues retrieves open issues from a repository (implements ticket.Client).
+func (c *GitHubRESTClient) FetchIssues(ctx context.Context, owner, repo string, labels []string) ([]*Issue, error) {
+	params := map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"state": "OPEN",
+	}
+
+	if len(labels) > 0 {
+		params["labels"] = labels
+	}
+
+	result, err := c.listIssues(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseIssuesResponse(result)
+}
+
+// GetIssue retrieves a specific issue by number (implements ticket.Client).
+func (c *GitHubRESTClient) GetIssue(ctx context.Context, owner, repo string, number int) (*Issue, error) {
+	params := map[string]interface{}{
+		"owner":        owner,
+		"repo":         repo,
+		"issue_number": float64(number),
+	}
+
+	result, err := c.getIssue(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parseIssueResponse(result, owner, repo)
+}
+
+// ParseAcceptanceCriteria extracts checklist items from issue body (implements ticket.Client).
+func (c *GitHubRESTClient) ParseAcceptanceCriteria(body string) ([]string, error) {
+	// Reuse the implementation from GitHubClient
+	ghClient := &GitHubClient{}
+	return ghClient.ParseAcceptanceCriteria(body)
+}
+
+// CheckPRStatus checks if an issue has an associated PR (implements ticket.Client).
+func (c *GitHubRESTClient) CheckPRStatus(ctx context.Context, owner, repo string, issueNumber int) (*PRStatus, error) {
+	query := fmt.Sprintf("repo:%s/%s is:pr #%d", owner, repo, issueNumber)
+
+	params := map[string]interface{}{
+		"query": query,
+		"owner": owner,
+		"repo":  repo,
+	}
+
+	result, err := c.searchPullRequests(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.parsePRSearchResponse(result)
 }
 
 // listIssues lists issues using GitHub REST API.
@@ -271,4 +351,330 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// GetPullRequest fetches PR details (state, merged status, head SHA).
+func (c *GitHubRESTClient) GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*PullRequest, error) {
+	// Build GitHub API URL
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", owner, repo, prNumber)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response
+	var rawPR map[string]interface{}
+	if err := json.Unmarshal(body, &rawPR); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Extract fields we care about
+	pr := &PullRequest{
+		Number: int(rawPR["number"].(float64)),
+		State:  rawPR["state"].(string),
+		Title:  rawPR["title"].(string),
+	}
+
+	// Check merged status
+	if merged, ok := rawPR["merged"].(bool); ok {
+		pr.Merged = merged
+	}
+
+	// Extract head SHA
+	if head, ok := rawPR["head"].(map[string]interface{}); ok {
+		if sha, ok := head["sha"].(string); ok {
+			pr.HeadSHA = sha
+		}
+	}
+
+	return pr, nil
+}
+
+// ListPRComments fetches all comments on a pull request.
+func (c *GitHubRESTClient) ListPRComments(ctx context.Context, owner, repo string, prNumber int) ([]PRComment, error) {
+	// Build GitHub API URL (use issues endpoint for comments)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add query params
+	q := req.URL.Query()
+	q.Add("per_page", "100")
+	req.URL.RawQuery = q.Encode()
+
+	// Set headers
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	// Execute request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response
+	var rawComments []map[string]interface{}
+	if err := json.Unmarshal(body, &rawComments); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Convert to PRComment structs
+	comments := make([]PRComment, 0, len(rawComments))
+	for _, raw := range rawComments {
+		comment := PRComment{
+			ID:   int64(raw["id"].(float64)),
+			Body: raw["body"].(string),
+		}
+
+		// Extract user login
+		if user, ok := raw["user"].(map[string]interface{}); ok {
+			if login, ok := user["login"].(string); ok {
+				comment.User = login
+			}
+		}
+
+		// Parse created_at timestamp
+		if createdStr, ok := raw["created_at"].(string); ok {
+			if created, err := time.Parse(time.RFC3339, createdStr); err == nil {
+				comment.CreatedAt = created
+			}
+		}
+
+		comments = append(comments, comment)
+	}
+
+	return comments, nil
+}
+
+// GetLatestAIReviewComment finds the most recent AI review comment (filters by prefix).
+// Returns nil if no AI review comment found.
+func (c *GitHubRESTClient) GetLatestAIReviewComment(ctx context.Context, owner, repo string, prNumber int) (*PRComment, error) {
+	// Fetch all comments
+	comments, err := c.ListPRComments(ctx, owner, repo, prNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter for AI review comments (prefix: "## 🤖 AI Code Review (Gemini 2.5 Pro)")
+	aiComments := make([]PRComment, 0)
+	for _, comment := range comments {
+		if strings.HasPrefix(comment.Body, "## 🤖 AI Code Review (Gemini 2.5 Pro)") {
+			aiComments = append(aiComments, comment)
+		}
+	}
+
+	// No AI comments found
+	if len(aiComments) == 0 {
+		return nil, nil
+	}
+
+	// Sort by CreatedAt descending (most recent first)
+	sort.Slice(aiComments, func(i, j int) bool {
+		return aiComments[i].CreatedAt.After(aiComments[j].CreatedAt)
+	})
+
+	// Return most recent
+	return &aiComments[0], nil
+}
+
+// ParseAIReviewFeedback extracts actionable feedback from AI review comment.
+// Strips markdown formatting and extracts the "Issues Found" section.
+func (c *GitHubRESTClient) ParseAIReviewFeedback(comment *PRComment) string {
+	if comment == nil {
+		return ""
+	}
+
+	body := comment.Body
+
+	// Extract content after "## Issues Found" or "## 🔍 Issues Found"
+	issuesIdx := strings.Index(body, "## Issues Found")
+	if issuesIdx == -1 {
+		issuesIdx = strings.Index(body, "## 🔍 Issues Found")
+	}
+
+	// If "Issues Found" section exists, extract it
+	if issuesIdx != -1 {
+		// Find the end of the section (next ## heading or end of comment)
+		sectionStart := issuesIdx
+		sectionEnd := len(body)
+
+		// Look for next ## heading after Issues Found
+		nextHeadingIdx := strings.Index(body[issuesIdx+10:], "\n##")
+		if nextHeadingIdx != -1 {
+			sectionEnd = issuesIdx + 10 + nextHeadingIdx
+		}
+
+		// Extract the section
+		section := body[sectionStart:sectionEnd]
+
+		// Clean up: remove markdown formatting
+		section = strings.ReplaceAll(section, "**", "")
+		section = strings.ReplaceAll(section, "`", "")
+
+		return strings.TrimSpace(section)
+	}
+
+	// Fallback: return full comment body with markdown cleaned
+	cleaned := strings.ReplaceAll(body, "**", "")
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
+	return strings.TrimSpace(cleaned)
+}
+
+// Helper methods to parse GitHub API responses into ticket types
+
+// parseIssuesResponse converts raw GitHub API response to Issue slice.
+func (c *GitHubRESTClient) parseIssuesResponse(result interface{}) ([]*Issue, error) {
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type")
+	}
+
+	items, ok := resultMap["items"].([]map[string]interface{})
+	if !ok {
+		return []*Issue{}, nil
+	}
+
+	issues := make([]*Issue, 0, len(items))
+	for _, item := range items {
+		issue, err := c.mapToIssue(item)
+		if err != nil {
+			continue // Skip malformed issues
+		}
+		issues = append(issues, issue)
+	}
+
+	return issues, nil
+}
+
+// parseIssueResponse converts single issue response to Issue.
+func (c *GitHubRESTClient) parseIssueResponse(result interface{}, owner, repo string) (*Issue, error) {
+	issueData, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type")
+	}
+
+	issue, err := c.mapToIssue(issueData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure owner and repo are set
+	if issue.RepoOwner == "" {
+		issue.RepoOwner = owner
+	}
+	if issue.RepoName == "" {
+		issue.RepoName = repo
+	}
+
+	return issue, nil
+}
+
+// mapToIssue converts GitHub API issue data to Issue.
+func (c *GitHubRESTClient) mapToIssue(data map[string]interface{}) (*Issue, error) {
+	number, ok := data["number"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("issue missing number")
+	}
+
+	title, ok := data["title"].(string)
+	if !ok {
+		return nil, fmt.Errorf("issue missing title")
+	}
+
+	body, _ := data["body"].(string)
+
+	// Extract labels
+	labels := []string{}
+	if labelsRaw, ok := data["labels"].([]interface{}); ok {
+		for _, labelItem := range labelsRaw {
+			if labelMap, ok := labelItem.(map[string]interface{}); ok {
+				if name, ok := labelMap["name"].(string); ok {
+					labels = append(labels, name)
+				}
+			}
+		}
+	}
+
+	return &Issue{
+		Number:    int(number),
+		Title:     title,
+		Body:      body,
+		Labels:    labels,
+		RepoOwner: "",
+		RepoName:  "",
+	}, nil
+}
+
+// parsePRSearchResponse extracts PR status from search results.
+func (c *GitHubRESTClient) parsePRSearchResponse(result interface{}) (*PRStatus, error) {
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	items, ok := resultMap["items"].([]map[string]interface{})
+	if !ok || len(items) == 0 {
+		return nil, nil // No PRs found
+	}
+
+	// Return first PR
+	pr := items[0]
+
+	number, ok := pr["number"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("PR missing number")
+	}
+
+	state, _ := pr["state"].(string)
+	htmlURL, _ := pr["html_url"].(string)
+	merged, _ := pr["merged"].(bool)
+
+	return &PRStatus{
+		Number:  int(number),
+		State:   state,
+		HTMLURL: htmlURL,
+		Merged:  merged,
+	}, nil
 }

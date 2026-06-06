@@ -110,6 +110,8 @@ func TestClaudeCodeBackend_Execute_UnsupportedModel_DefaultModel(t *testing.T) {
 
 // TestClaudeCodeBackend_Execute_ValidModel_Phase1Placeholder verifies Phase 1 placeholder behavior.
 func TestClaudeCodeBackend_Execute_ValidModel_Phase1Placeholder(t *testing.T) {
+	t.Skip("Skipping test that calls real Claude CLI - use integration tests for this")
+
 	backend := NewClaudeCodeBackend()
 	ctx := context.Background()
 	prompt := "Implement the Hunter agent with SAM.gov integration"
@@ -128,6 +130,8 @@ func TestClaudeCodeBackend_Execute_ValidModel_Phase1Placeholder(t *testing.T) {
 
 // TestClaudeCodeBackend_Execute_ComplexModel verifies handling of complex model.
 func TestClaudeCodeBackend_Execute_ComplexModel(t *testing.T) {
+	t.Skip("Skipping test that calls real Claude CLI - use integration tests for this")
+
 	backend := NewClaudeCodeBackend()
 	ctx := context.Background()
 	prompt := "Design the Zone 2 orchestration architecture"

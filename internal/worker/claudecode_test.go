@@ -89,6 +89,11 @@ func (m *mockBackend) Execute(ctx context.Context, prompt string, model string) 
 	return "", fmt.Errorf("not implemented")
 }
 
+func (m *mockBackend) ExecuteInDir(ctx context.Context, prompt string, model string, workDir string) (string, error) {
+	// For tests, delegate to Execute (tests don't care about workDir)
+	return m.Execute(ctx, prompt, model)
+}
+
 func (m *mockBackend) Name() string {
 	return m.name
 }
