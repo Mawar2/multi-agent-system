@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  supervisor:
+    build: .
+    restart: unless-stopped
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:?GITHUB_TOKEN is required}
+      - SAM_API_KEY=${SAM_API_KEY:-}
+    volumes:
+      # Persist task queue JSON files across container restarts.
+      - tasks:/app/tasks
+      # Persist per-worker repository clones to avoid re-cloning on restart.
+      - workspaces:/app/projects
+      # Mount the config file read-only; edit it on the host, then restart.
+      - ./orchestrator.yml:/orchestrator.yml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tasks:
+  workspaces:

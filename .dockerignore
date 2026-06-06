@@ -1,0 +1,24 @@
+# Version control
+.git
+.gitignore
+
+# Runtime data — large, not needed at build time
+tasks/
+projects/
+
+# Documentation
+docs/
+
+# Generated binaries
+*.exe
+bin/
+
+# Local config (mounted at runtime via volume)
+orchestrator.yml
+
+# Log files
+*.log
+
+# Editor artefacts
+.vscode/
+.idea/
