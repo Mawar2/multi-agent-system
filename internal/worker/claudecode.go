@@ -19,15 +19,15 @@ import (
 // Phase 1: Uses Claude Code CLI as the backend (local, free)
 // Phase 2+: Can use other backends (Antigravity, Vertex AI) via LLMBackend abstraction
 type ClaudeCodeWorker struct {
-	id              string               // Unique worker identifier
-	tier            taskqueue.Tier       // Worker tier (determines which tasks to claim)
-	queue           taskqueue.TaskQueue  // Queue to claim tasks from
-	backend         llm.LLMBackend       // LLM backend for code generation
-	workspaceRoot   string               // Root directory for isolated workspaces
-	workspaceMgr    *WorkspaceManager    // Manages cloning and updating target repos
-	tasksCompleted  int                  // Number of tasks successfully completed
-	tasksFailed     int                  // Number of tasks failed
-	mu              sync.Mutex           // Protects stats (tasksCompleted, tasksFailed)
+	id             string              // Unique worker identifier
+	tier           taskqueue.Tier      // Worker tier (determines which tasks to claim)
+	queue          taskqueue.TaskQueue // Queue to claim tasks from
+	backend        llm.LLMBackend      // LLM backend for code generation
+	workspaceRoot  string              // Root directory for isolated workspaces
+	workspaceMgr   *WorkspaceManager   // Manages cloning and updating target repos
+	tasksCompleted int                 // Number of tasks successfully completed
+	tasksFailed    int                 // Number of tasks failed
+	mu             sync.Mutex          // Protects stats (tasksCompleted, tasksFailed)
 }
 
 // NewClaudeCodeWorker creates a new ClaudeCodeWorker instance.
@@ -48,12 +48,12 @@ func NewClaudeCodeWorker(
 	workspaceRoot string,
 ) *ClaudeCodeWorker {
 	return &ClaudeCodeWorker{
-		id:            id,
-		tier:          tier,
-		queue:         queue,
-		backend:       backend,
-		workspaceRoot: workspaceRoot,
-		workspaceMgr:  NewWorkspaceManager(workspaceRoot, id),
+		id:             id,
+		tier:           tier,
+		queue:          queue,
+		backend:        backend,
+		workspaceRoot:  workspaceRoot,
+		workspaceMgr:   NewWorkspaceManager(workspaceRoot, id),
 		tasksCompleted: 0,
 		tasksFailed:    0,
 	}
