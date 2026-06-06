@@ -571,17 +571,10 @@ outputs to `bin/supervisor` and `make test` uses `-race`.
 go build -o bin/supervisor.exe ./cmd/supervisor   # supervisor entry point
 go build ./...                                      # all packages
 
-# Test. Two important traps on this machine:
-#  1. `go test -race` fails: "-race requires cgo" (CGO off, no C compiler).
-#     So `make test` (which uses -race) does NOT work locally — drop -race.
-#  2. ⚠️ `go test ./...` HANGS. The internal/worker package test `TestExecute`
-#     is NON-HERMETIC: it builds a real ClaudeCodeWorker (baseDir /tmp/projects)
-#     and calls Execute, which runs the real WorkspaceManager.PrepareWorkspace ->
-#     `git pull` (workspace.go) against a cloned private repo. With no TTY that
-#     git command blocks on a credential prompt and the test times out after 10m.
-#
-# Run the hermetic packages (everything except worker) — all green:
-go test -cover ./internal/conventions ./internal/llm ./internal/orchestrator ./internal/taskqueue ./internal/ticket
+# Test. One trap on this machine: `go test -race` fails with
+# "-race requires cgo" (CGO off, no C compiler), so `make test` (which uses
+# -race) does NOT work locally — drop -race and the whole suite passes:
+go test -cover ./...
 
 # Single package
 go test ./internal/orchestrator
@@ -598,11 +591,13 @@ go vet ./...
 golangci-lint run ./...
 ```
 
-Approx. coverage on the hermetic packages: conventions 86%, llm 79%, taskqueue
-76%, ticket 43%, orchestrator 38%. The two `cmd/` packages have no tests, and
-`internal/worker` cannot be run unattended (see the hang trap above — fixing it
-requires injecting a mock/`WorkspaceManager` so `Execute` doesn't touch real git).
-Tests are standard Go `_test.go` files beside each package.
+Approx. coverage: conventions 86%, llm 79%, taskqueue 76%, ticket 43%,
+orchestrator 38%, worker covered via hermetic unit tests. The two `cmd/`
+packages have no tests. `internal/worker`'s `TestExecute` injects fake
+`workspaceManager` / `qualityGate` implementations (see the unexported
+interfaces in `claudecode.go`) so it never shells out to real git or
+test/lint tools — keep new worker tests on that pattern. Tests are standard
+Go `_test.go` files beside each package.
 Module `github.com/Mawar2/multi-agent-system`, Go 1.25.1; deps: `gopkg.in/yaml.v3`,
 `github.com/google/uuid`.
 
