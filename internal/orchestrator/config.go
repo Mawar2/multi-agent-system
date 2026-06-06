@@ -31,6 +31,25 @@ type ProjectConfig struct {
 	BranchPattern   string   `yaml:"branch_pattern"`   // e.g., "feature/KAI-{ticket}-{summary}"
 	CommitPattern   string   `yaml:"commit_pattern"`   // e.g., "{ticket}_{description}"
 	Labels          []string `yaml:"labels,omitempty"` // Filter issues by labels (optional)
+	IssueFilter     IssueFilterConfig `yaml:"issue_filter,omitempty"` // Controls which issues are eligible
+}
+
+// IssueFilterConfig controls which issues are eligible for automated processing.
+// Allows teams to skip issues that require human judgment or lack necessary context.
+type IssueFilterConfig struct {
+	// SkipIfHasPR skips issues that already have an associated pull request.
+	// Use a pointer so we can distinguish "not set" (defaults to true) from "set to false".
+	SkipIfHasPR *bool `yaml:"skip_if_has_pr,omitempty"`
+
+	// SkipLabels lists labels that mark issues as ineligible for auto-working.
+	// Any issue carrying at least one of these labels is skipped.
+	// Example: ["needs-human-design", "blocked", "wontfix"]
+	SkipLabels []string `yaml:"skip_labels,omitempty"`
+
+	// RequireAcceptanceCriteria skips issues that have no acceptance criteria checklist.
+	// Acceptance criteria are markdown checkboxes: "- [ ] criterion".
+	// Defaults to false.
+	RequireAcceptanceCriteria bool `yaml:"require_acceptance_criteria"`
 }
 
 // WorkerTierConfig defines worker pool settings.
@@ -82,6 +101,14 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if config.TaskQueueDir == "" {
 		config.TaskQueueDir = "./tasks"
+	}
+
+	// Default: skip issues that already have a PR (preserves original behaviour).
+	for i := range config.Projects {
+		if config.Projects[i].IssueFilter.SkipIfHasPR == nil {
+			t := true
+			config.Projects[i].IssueFilter.SkipIfHasPR = &t
+		}
 	}
 
 	// Validate
