@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -100,6 +101,33 @@ func (m *mockBackend) Name() string {
 
 func (m *mockBackend) Models() []string {
 	return m.models
+}
+
+// fakeWorkspaceManager is a workspaceManager that returns a fixed local directory
+// without cloning or pulling any repository. This keeps TestExecute hermetic — the
+// real *WorkspaceManager shells out to `git clone`/`git pull`, which hangs on a
+// credential prompt for private repos when run in CI/non-interactive contexts.
+type fakeWorkspaceManager struct {
+	dir string
+	err error
+}
+
+func (f *fakeWorkspaceManager) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	return f.dir, f.err
+}
+
+func (f *fakeWorkspaceManager) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	return f.dir, f.err
+}
+
+// stubQualityGate is a qualityGate that returns a fixed result without running
+// any real test/lint/format commands, keeping Execute hermetic.
+type stubQualityGate struct {
+	err error
+}
+
+func (s stubQualityGate) Validate(ctx context.Context, ruleset *conventions.Ruleset) error {
+	return s.err
 }
 
 // TestNewClaudeCodeWorker tests worker initialization.
@@ -293,6 +321,10 @@ func TestExecute(t *testing.T) {
 			backend.executeFunc = tt.executeFunc
 
 			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			// Inject fakes so Execute does not clone/pull real repos or run real
+			// test/lint/format tools — keeping this a hermetic unit test.
+			worker.workspaceMgr = &fakeWorkspaceManager{dir: t.TempDir()}
+			worker.newQualityGates = func(string) qualityGate { return stubQualityGate{} }
 
 			result, err := worker.Execute(context.Background(), tt.task)
 

@@ -100,33 +100,68 @@ func main() {
 func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) []worker.Worker {
 	var workers []worker.Worker
 
-	// Create LLM backend (Claude Code CLI for Phase 1)
-	backend := llm.NewClaudeCodeBackend()
+	// Claude Code CLI backend — always available; used by the claude tier and as
+	// the fallback for the Gemini tiers when the local Antigravity bridge is down.
+	claudeBackend := llm.NewClaudeCodeBackend()
+
+	// Resolve the backends for the Gemini tiers. Prefer the local Antigravity
+	// bridge (Gemini via the user's paid subscription, zero API cost). If the
+	// bridge isn't reachable, fall back to the Claude Code CLI backend so the
+	// system still runs.
+	// The plan-execute GeminiWorker can run the Gemini tiers via the local
+	// Antigravity bridge, but the bridge's agentapi is an agentic assistant that
+	// does NOT reliably emit the structured JSON plan-execute needs (it returns
+	// prose or times out). So GeminiWorker is gated behind USE_GEMINI_WORKER=1;
+	// by default (and whenever the bridge is down) the Gemini tiers use the proven
+	// ClaudeCodeWorker on the Claude backend so the system always works.
+	var flashBackend, proBackend llm.LLMBackend = claudeBackend, claudeBackend
+	bridgeUp := false
+	fmt.Println("Attempting to connect to local Antigravity CLI...")
+	if fb, err := llm.NewLocalAntigravityBackend("gemini-3.5-flash"); err != nil {
+		fmt.Printf("  Local Antigravity bridge unavailable: %v\n", err)
+	} else {
+		bridgeUp = true
+		flashBackend = fb
+		if pb, err := llm.NewLocalAntigravityBackend("gemini-3.5-pro"); err == nil {
+			proBackend = pb
+		} else {
+			proBackend = fb
+		}
+		fmt.Println("✓ Connected to local Antigravity CLI")
+	}
+
+	ugw := os.Getenv("USE_GEMINI_WORKER")
+	useGemini := bridgeUp && (ugw == "1" || ugw == "true" || ugw == "yes")
+	switch {
+	case useGemini:
+		fmt.Println("  Gemini tiers: GeminiWorker plan-execute via the local bridge [experimental — USE_GEMINI_WORKER set]")
+	case bridgeUp:
+		fmt.Println("  Bridge is up, but GeminiWorker is disabled (set USE_GEMINI_WORKER=1 to enable).")
+		fmt.Println("  Gemini tiers will use the Claude Code CLI backend.")
+	default:
+		fmt.Println("  Gemini tiers will use the Claude Code CLI backend (fallback).")
+	}
+
+	// newGeminiTierWorker builds a worker for a Gemini tier: the plan-execute
+	// GeminiWorker (on the bridge backend) when enabled, else a ClaudeCodeWorker
+	// on the Claude backend (the working default).
+	newGeminiTierWorker := func(id string, tier taskqueue.Tier, bridgeBackend llm.LLMBackend) worker.Worker {
+		if useGemini {
+			return worker.NewGeminiWorker(id, tier, queue, bridgeBackend, "./projects")
+		}
+		return worker.NewClaudeCodeWorker(id, tier, queue, claudeBackend, "./projects")
+	}
 
 	// Gemini Flash workers
 	for i := 0; i < config.WorkerTiers.GeminiFlash.MaxWorkers; i++ {
 		workerID := fmt.Sprintf("gemini-flash-%d", i+1)
-		w := worker.NewClaudeCodeWorker(
-			workerID,
-			taskqueue.TierGeminiFlash,
-			queue,
-			backend,
-			"./projects", // Project checkout directory
-		)
-		workers = append(workers, w)
+		workers = append(workers, newGeminiTierWorker(workerID, taskqueue.TierGeminiFlash, flashBackend))
 	}
 
 	// Gemini Pro workers
 	for i := 0; i < config.WorkerTiers.GeminiPro.MaxWorkers; i++ {
 		workerID := fmt.Sprintf("gemini-pro-%d", i+1)
-		w := worker.NewClaudeCodeWorker(
-			workerID,
-			taskqueue.TierGeminiPro,
-			queue,
-			backend,
-			"./projects",
-		)
-		workers = append(workers, w)
+		workers = append(workers, newGeminiTierWorker(workerID, taskqueue.TierGeminiPro, proBackend))
 	}
 
 	// Claude workers
@@ -136,7 +171,7 @@ func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) [
 			workerID,
 			taskqueue.TierClaude,
 			queue,
-			backend,
+			claudeBackend,
 			"./projects",
 		)
 		workers = append(workers, w)

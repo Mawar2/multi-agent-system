@@ -1,4 +1,10 @@
-# CLAUDE.md — Multi-Agent Orchestration System
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+# Multi-Agent Orchestration System
 
 **Last updated:** 2026-06-06
 
@@ -35,22 +41,18 @@ The **Multi-Agent Orchestration System** is a production infrastructure system t
 
 ## GitHub Authentication
 
-**IMPORTANT:** The GitHub token is stored in the user's PowerShell profile.
+Both `cmd/supervisor` and `cmd/backfill` read the token from the `GITHUB_TOKEN`
+environment variable (`os.Getenv("GITHUB_TOKEN")` in `NewGitHubRESTClient`). It is
+already set in this session — **use `$env:GITHUB_TOKEN` directly**; no need to parse
+it out of `$PROFILE`.
 
-**Location:** `$PROFILE` (PowerShell profile)
-
-**To use:**
 ```powershell
-# PowerShell - read token from profile
-$env:GITHUB_TOKEN = (cat $PROFILE | Select-String "ghp_").Matches.Value
-
-# Or set from environment if already configured
-# Token should have repo and read:org permissions
+# Verify it is present (do not echo the value)
+if ($env:GITHUB_TOKEN) { "GITHUB_TOKEN is set" } else { "NOT set" }
 ```
 
-**Required permissions:**
-- `repo` - Full control of repositories
-- `read:org` - Read org membership
+If it is ever missing, it is persisted in the user's `$PROFILE`; sourcing the profile
+in a fresh shell restores it. Required scopes: `repo`, `read:org`.
 
 ---
 
@@ -297,30 +299,36 @@ jq -r 'select(.ErrorMsg | contains("Max review iterations"))' tasks/*.json | wc 
 - Checks for existing PRs to avoid duplicates
 
 **`internal/orchestrator/router.go`**
-- Complexity-based routing logic
-- Scores issues 0-10 based on title/description
-- Maps scores to tiers (0-1 flash, 2-4 pro, 5+ claude)
+- `RuleBasedRouter`: deterministic keyword/label heuristics (no API calls)
+- Classifies each issue into one of THREE `Complexity` values — `ComplexitySimple` / `ComplexityMedium` / `ComplexityComplex` (a 3-value enum in `task.go`, NOT a 0-10 score)
+- Maps complexity → tier 1:1: simple→`TierGeminiFlash`, medium→`TierGeminiPro`, complex→`TierClaude`
+- Heuristics: simple keywords ("fix typo", "docs:", "update readme"), complex keywords ("architecture", "migration", "security"), file-count estimate from body, then issue labels; defaults to medium
+- Note: `cmd/backfill` uses a *separate* 0-10 size heuristic (`inferComplexity`) based on PR additions+deletions — do not confuse it with the router
 
 ### Task Management
 
-**`internal/taskqueue/json_queue.go`**
-- JSON-backed task queue implementation
-- Atomic task claiming with file locking
-- Status transitions: Pending → InProgress → Review/Failed
-- Tasks stored in `./tasks/{uuid}.json`
+**`internal/taskqueue/json.go`** (`NewJSONQueue`)
+- JSON-backed implementation of the `TaskQueue` interface (`queue.go`)
+- Atomic claim via `Dequeue(ctx, tier, workerID)`; `Release` returns a task to Pending and increments `Attempts`
+- Tasks stored as `./tasks/{uuid}.json`
+
+**`internal/taskqueue/queue.go`**
+- `TaskQueue` interface: Enqueue / Dequeue / Update / Get / List / Release, plus `TaskFilter`
 
 **`internal/taskqueue/task.go`**
-- Task data structure
-- Status enum (Pending, InProgress, Review, Failed)
-- Tier enum (GeminiFlash, GeminiPro, Claude)
+- `Task` struct (JSON tags are snake_case, e.g. `issue_number`, `pr_number`)
+- `Status` enum: Pending → Claimed → InProgress → Review → Complete / Failed (6 values, not 4)
+- `Complexity` enum: Simple / Medium / Complex; `Tier` enum: GeminiFlash / GeminiPro / Claude
+- Feedback-loop fields: `ParentTaskID`, `ReviewIteration`, `ReviewFeedback`, `ReviewCommentID`
 
 ### Workers
 
-**`internal/worker/claudecode.go`** (438 lines)
-- ClaudeCodeWorker implementation
-- Claims tasks, prepares workspace, executes LLM
-- Runs quality gates before accepting PR
-- Updates task status throughout lifecycle
+**`internal/worker/claudecode.go`** (`ClaudeCodeWorker`, `NewClaudeCodeWorker`)
+- Implements the `Worker` interface (`worker.go`): Claim / Execute / Release / Health / ID / Tier
+- Claims tasks, prepares workspace, executes LLM, runs quality gates, creates PR
+- **Per-tier backends.** `main.go` wires backends per tier. The `claude` tier uses `llm.ClaudeCodeBackend` (`claude --print --dangerously-skip-permissions`) and runs the full loop end-to-end (validated: clones, edits, opens a real PR). The Claude tier is the **working default**.
+- **`internal/worker/gemini.go` — `GeminiWorker` (plan-execute).** Since the Antigravity bridge returns *text* and acts in Antigravity's own project (not the per-worker clone), `GeminiWorker` asks Gemini for a JSON plan of file operations, then applies them in Go, runs quality gates, commits/pushes via `gitCmd`, and opens the PR via `gh` (the `prCreator` seam). Reuses `workspaceManager`/`qualityGate` seams; hermetic tests in `gemini_test.go`.
+- ⚠️ **GeminiWorker is gated behind `USE_GEMINI_WORKER=1` and OFF by default.** e2e validation showed the bridge's `agentapi` is an *agentic assistant* that does NOT reliably emit the required JSON (it returns prose or times out at 10 min), so the Gemini plan-execute path isn't production-ready. With the flag unset (default), the `gemini-flash`/`gemini-pro` tiers run `ClaudeCodeWorker` on the Claude backend (works). Making Gemini coding reliable likely needs a direct Gemini/Vertex API backend with JSON mode rather than the agentic bridge — pending decision.
 
 **`internal/worker/workspace.go`** (157 lines)
 - WorkspaceManager with per-worker isolation
@@ -336,11 +344,10 @@ jq -r 'select(.ErrorMsg | contains("Max review iterations"))' tasks/*.json | wc 
 
 ### LLM Backend
 
-**`internal/llm/claudecode.go`**
-- Claude Code CLI backend implementation
-- Executes Claude Code as subprocess
-- ExecuteInDir for workspace isolation
-- Captures output and errors
+**`internal/llm/backend.go`** + **`internal/llm/claude_code.go`**
+- `LLMBackend` interface: `Execute`, `ExecuteInDir` (workspace isolation), `Name`, `Models`
+- `claude_code.go` is the only implementation today (Claude Code CLI as subprocess)
+- Designed so a Gemini/Antigravity backend can be swapped in without changing worker logic
 
 ### GitHub Integration
 
@@ -350,46 +357,52 @@ jq -r 'select(.ErrorMsg | contains("Max review iterations"))' tasks/*.json | wc 
 - Direct HTTP requests with GITHUB_TOKEN auth
 - Methods: listIssues, getIssue, searchPullRequests
 
-**`internal/ticket/github_client.go`**
-- High-level GitHub operations
-- Wraps GitHubRESTClient
+**`internal/ticket/client.go`**
+- High-level GitHub operations / `Client` interface, wraps `GitHubRESTClient`
 - Issue discovery and PR detection
+- `mcp_client.go` is the legacy MCP path, kept but superseded by the REST client
 
 ### Conventions
 
-**`internal/conventions/ruleset.go`**
-- Project conventions parser
-- Reads CLAUDE.md, CONVENTIONS.md from target repos
-- Extracts test/lint/format/build commands
-- Used by quality gates and prompt building
+**`internal/conventions/parser.go`** + **`internal/conventions/ruleset.go`**
+- Parses a target repo's CLAUDE.md / CONVENTIONS.md / Makefile into a `Ruleset`
+- Extracts test/lint/format/build commands consumed by quality gates and prompt building
+- Test fixtures live in `test/fixtures/conventions/`
+
+### Entry Points
+
+**`cmd/supervisor/main.go`** — builds the queue, router, REST client, supervisor, and 10 workers (5 flash + 3 pro + 2 claude), then runs the supervisor loop and one goroutine per worker.
+
+**`cmd/backfill/main.go`** — one-shot utility: fetches open PRs from Mawar2/Kaimi and enqueues them as `StatusReview` tasks so the supervisor's feedback loop picks them up. Requires `GITHUB_TOKEN`.
 
 ---
 
 ## Configuration
 
-**`orchestrator.yml`** - Main configuration file
+**`orchestrator.yml`** — main config (git-ignored; copy from `orchestrator.example.yml`). Parsed by `internal/orchestrator/config.go` → `LoadConfig`. The real schema:
 
 ```yaml
-task_queue_dir: "./tasks"
-poll_interval: 60s
-
 projects:
-  - repo_owner: "Mawar2"
-    repo_name: "Kaimi"
-    labels: []
-    priority: 1
+  - name: kaimi
+    repo_owner: Mawar2
+    repo_name: Kaimi
+    conventions_path: ./CLAUDE.md
+    branch_pattern: "feature/KAI-{ticket}-{summary}"
+    commit_pattern: "{ticket}_{description}"
+    labels: []                 # optional issue-label filter
 
 worker_tiers:
-  gemini_flash:
-    max_workers: 5
-    complexity_range: [0, 1]
-  gemini_pro:
-    max_workers: 3
-    complexity_range: [2, 4]
-  claude:
-    max_workers: 2
-    complexity_range: [5, 10]
+  gemini_flash: { max_workers: 5, model: gemini-flash-3.5 }
+  gemini_pro:   { max_workers: 3, model: gemini-pro-3.5 }
+  claude:       { max_workers: 2, model: claude-sonnet-4.5 }
+
+poll_interval_seconds: 60      # how often to poll GitHub for new issues
+task_timeout_minutes: 120      # max time a worker spends on a task
+max_retry_attempts: 3          # retries before a task is marked failed
+task_queue_dir: ./tasks        # JSON queue directory
 ```
+
+Tiers carry a `model` string and `max_workers`, NOT a `complexity_range` — the complexity→tier mapping is hard-coded in the router. The `model` field is currently informational (see the all-tiers-use-Claude-backend note above).
 
 ---
 
@@ -397,13 +410,20 @@ worker_tiers:
 
 ### Prerequisites
 
-1. **Set GITHUB_TOKEN:**
-   ```powershell
-   # Read from PowerShell profile where token is stored
-   $env:GITHUB_TOKEN = (cat $PROFILE | Select-String "ghp_").Matches.Value
-   ```
+1. **GITHUB_TOKEN** — already exported in this session; just use `$env:GITHUB_TOKEN`.
 
-2. **Build supervisor:**
+2. **GitHub CLI for PR creation & git auth** — `gh` is installed (machine PATH) and
+   authenticated (account `Mawar2`, via token + keyring). `gh auth setup-git` has
+   configured git's credential helper, so workers clone/pull private repos without
+   prompting. Workers shell git out via `gitCmd` (`internal/worker/workspace.go`),
+   which sets `GIT_TERMINAL_PROMPT=0` so any auth gap fails fast instead of hanging.
+
+3. **Worker autonomy** — the Claude backend runs `claude --print --dangerously-skip-permissions`
+   so the headless agent can edit files and run git/gh/tests in its isolated clone.
+   Override with `CLAUDE_PERMISSION_MODE` (e.g. `acceptEdits`, `plan`) if you want
+   prompts/dry-runs. Gemini-tier workers go through the Antigravity bridge instead.
+
+4. **Build supervisor:**
    ```bash
    cd /c/Users/Owner/OneDrive/Documents/Builder/multi-agent-system
    go build -o supervisor.exe ./cmd/supervisor
@@ -497,8 +517,8 @@ rm -rf projects/
 
 ### Single Worker Test
 1. Clean workspace: `rm -rf projects/`
-2. Set GITHUB_TOKEN: `$env:GITHUB_TOKEN = "ghp_..."`
-3. Run supervisor: `./supervisor.exe --config orchestrator.yml`
+2. Confirm `$env:GITHUB_TOKEN` is set (already exported this session)
+3. Run supervisor: `./bin/supervisor --config orchestrator.yml`
 4. Verify workspace created: `ls projects/gemini-flash-1/Mawar2/Kaimi/`
 
 ### Multi-Worker Test
@@ -545,28 +565,54 @@ rm -rf projects/
 
 ### Issue 4: GitHub Token Not Found
 **Error:** `GitHub API returned status 401`
-**Solution:** Token is in `$PROFILE`, set `$env:GITHUB_TOKEN`
+**Solution:** Ensure `$env:GITHUB_TOKEN` is set in the current shell (it is exported this session; otherwise re-source `$PROFILE`)
 **Status:** ✅ Documented
 
 ---
 
 ## Development Guidelines
 
-### Building
+### Building, Testing, Linting
+
+There is a `Makefile`, but ⚠️ **`make` is NOT installed on this Windows machine** — use
+the raw `go` commands below. (`go` 1.25.1 and `golangci-lint` are on PATH.) The Makefile
+targets are `all` / `build` / `test` / `lint` / `fmt` / `run` / `clean`; `make build`
+outputs to `bin/supervisor` and `make test` uses `-race`.
 
 ```bash
-# Build supervisor
-go build -o supervisor.exe ./cmd/supervisor
+# Build (verified working)
+go build -o bin/supervisor.exe ./cmd/supervisor   # supervisor entry point
+go build ./...                                      # all packages
 
-# Build all packages
-go build ./...
+# Test. One trap on this machine: `go test -race` fails with
+# "-race requires cgo" (CGO off, no C compiler), so `make test` (which uses
+# -race) does NOT work locally — drop -race and the whole suite passes:
+go test -cover ./...
 
-# Run tests
-go test ./...
+# Single package
+go test ./internal/orchestrator
 
-# Run linter
-golangci-lint run
+# Single test by name (regex), verbose
+go test -run TestRoute ./internal/orchestrator -v
+
+# Vet (run by `go test`; keep it clean)
+go vet ./...
+
+# Lint — runs, but currently reports 4 PRE-EXISTING findings in
+# internal/ticket/github_rest_client.go (3× unchecked resp.Body.Close errcheck,
+# 1× staticcheck QF1003). Not introduced by recent work; fix opportunistically.
+golangci-lint run ./...
 ```
+
+Approx. coverage: conventions 86%, llm 79%, taskqueue 76%, ticket 43%,
+orchestrator 38%, worker covered via hermetic unit tests. The two `cmd/`
+packages have no tests. `internal/worker`'s `TestExecute` injects fake
+`workspaceManager` / `qualityGate` implementations (see the unexported
+interfaces in `claudecode.go`) so it never shells out to real git or
+test/lint tools — keep new worker tests on that pattern. Tests are standard
+Go `_test.go` files beside each package.
+Module `github.com/Mawar2/multi-agent-system`, Go 1.25.1; deps: `gopkg.in/yaml.v3`,
+`github.com/google/uuid`.
 
 ### Adding a New Worker Tier
 
@@ -660,12 +706,13 @@ At the start of every Claude Code session:
 
 ## Important Reminders
 
-1. **GITHUB_TOKEN is in `$PROFILE`** - Always check there first
+1. **Use `$env:GITHUB_TOKEN`** - already set this session; don't re-parse `$PROFILE`
 2. **Per-worker workspaces** - Each worker gets `./projects/{workerID}/{owner}/{repo}/`
 3. **Quality gates save money** - 30-40% cost reduction by filtering bad PRs
-4. **10 workers total** - 5 flash + 3 pro + 2 claude
+4. **10 workers total** - 5 flash + 3 pro + 2 claude; flash/pro route to the local Antigravity bridge (Gemini), claude uses the `claude` CLI, with Claude fallback if the bridge is down
 5. **Main branch is `master`** - Not `main`
-6. **This is production infrastructure** - Not a demo, optimize for years of operation
+6. **Build with `make build` → `bin/supervisor`** - binary is git-ignored
+7. **This is production infrastructure** - Not a demo, optimize for years of operation
 
 ---
 

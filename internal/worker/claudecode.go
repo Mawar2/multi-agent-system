@@ -19,15 +19,31 @@ import (
 // Phase 1: Uses Claude Code CLI as the backend (local, free)
 // Phase 2+: Can use other backends (Antigravity, Vertex AI) via LLMBackend abstraction
 type ClaudeCodeWorker struct {
-	id              string               // Unique worker identifier
-	tier            taskqueue.Tier       // Worker tier (determines which tasks to claim)
-	queue           taskqueue.TaskQueue  // Queue to claim tasks from
-	backend         llm.LLMBackend       // LLM backend for code generation
-	workspaceRoot   string               // Root directory for isolated workspaces
-	workspaceMgr    *WorkspaceManager    // Manages cloning and updating target repos
-	tasksCompleted  int                  // Number of tasks successfully completed
-	tasksFailed     int                  // Number of tasks failed
-	mu              sync.Mutex           // Protects stats (tasksCompleted, tasksFailed)
+	id              string                                // Unique worker identifier
+	tier            taskqueue.Tier                        // Worker tier (determines which tasks to claim)
+	queue           taskqueue.TaskQueue                   // Queue to claim tasks from
+	backend         llm.LLMBackend                        // LLM backend for code generation
+	workspaceRoot   string                                // Root directory for isolated workspaces
+	workspaceMgr    workspaceManager                      // Manages cloning and updating target repos
+	newQualityGates func(workspaceDir string) qualityGate // Factory for pre-PR quality validation
+	tasksCompleted  int                                   // Number of tasks successfully completed
+	tasksFailed     int                                   // Number of tasks failed
+	mu              sync.Mutex                            // Protects stats (tasksCompleted, tasksFailed)
+}
+
+// workspaceManager abstracts workspace preparation (clone/pull/checkout) so that
+// ClaudeCodeWorker can be unit-tested without performing real git operations.
+// *WorkspaceManager is the production implementation; tests inject a fake.
+type workspaceManager interface {
+	PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error)
+	PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+// qualityGate abstracts pre-PR validation so that ClaudeCodeWorker can be
+// unit-tested without shelling out to real test/lint/format tools.
+// *QualityGates is the production implementation; tests inject a fake.
+type qualityGate interface {
+	Validate(ctx context.Context, ruleset *conventions.Ruleset) error
 }
 
 // NewClaudeCodeWorker creates a new ClaudeCodeWorker instance.
@@ -54,6 +70,9 @@ func NewClaudeCodeWorker(
 		backend:       backend,
 		workspaceRoot: workspaceRoot,
 		workspaceMgr:  NewWorkspaceManager(workspaceRoot, id),
+		newQualityGates: func(workspaceDir string) qualityGate {
+			return NewQualityGates(workspaceDir)
+		},
 		tasksCompleted: 0,
 		tasksFailed:    0,
 	}
@@ -161,7 +180,7 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 	// Step 6: Run quality gates BEFORE accepting PR
 	// This prevents low-quality PRs that would fail AI review and waste costs
 	fmt.Printf("[Worker %s] Running quality gates before accepting PR...\n", w.id)
-	gates := NewQualityGates(workspaceDir)
+	gates := w.newQualityGates(workspaceDir)
 	if err := gates.Validate(ctx, ruleset); err != nil {
 		// Quality checks failed - reject the work, do not create/accept PR
 		return w.failResult(task, fmt.Errorf("quality gates failed: %w", err)), nil
@@ -260,8 +279,13 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 	// Original issue task prompt
 	var sb strings.Builder
 
+	// Lead with a ticket identifier as the first line so that downstream
+	// conversation records/titles are findable by repo+issue (the Antigravity
+	// bridge derives its conversation label/index from this first line).
+	fmt.Fprintf(&sb, "%s/%s#%d: %s\n\n", task.RepoOwner, task.RepoName, task.IssueNumber, task.Title)
+
 	// Header
-	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")
+	sb.WriteString("You are an autonomous code agent implementing this GitHub issue.\n\n")
 
 	// Task details
 	sb.WriteString("## TASK DETAILS\n\n")
@@ -361,6 +385,12 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 // This is used for pr_feedback tasks that address issues found by the AI reviewer.
 func (w *ClaudeCodeWorker) buildFixPrompt(task *taskqueue.Task, ruleset *conventions.Ruleset) string {
 	var sb strings.Builder
+
+	// Lead with a branch/PR identifier as the first line so the conversation
+	// record is findable by branch/PR (the Antigravity bridge labels/indexes the
+	// conversation from this first line).
+	fmt.Fprintf(&sb, "%s/%s PR#%d fix (%s, review iteration %d)\n\n",
+		task.RepoOwner, task.RepoName, task.PRNumber, task.BranchName, task.ReviewIteration)
 
 	// Header
 	sb.WriteString("You are an autonomous code agent fixing AI code review feedback.\n\n")
