@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -100,6 +101,48 @@ func (m *mockBackend) Name() string {
 
 func (m *mockBackend) Models() []string {
 	return m.models
+}
+
+// mockWorkspace is a mock implementation of workspaceProvider for testing.
+// It eliminates all real git and filesystem calls from TestExecute.
+type mockWorkspace struct {
+	prepareFunc    func(ctx context.Context, task *taskqueue.Task) (string, error)
+	prepareFixFunc func(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+func (m *mockWorkspace) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFunc != nil {
+		return m.prepareFunc(ctx, task)
+	}
+	return "/tmp/workspace", nil
+}
+
+func (m *mockWorkspace) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFixFunc != nil {
+		return m.prepareFixFunc(ctx, task)
+	}
+	return "/tmp/workspace", nil
+}
+
+// mockQualityGate is a mock implementation of qualityValidator for testing.
+// It eliminates all real test/lint/format tool invocations from TestExecute.
+type mockQualityGate struct {
+	validateFunc func(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error
+}
+
+func (m *mockQualityGate) Validate(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error {
+	if m.validateFunc != nil {
+		return m.validateFunc(ctx, ruleset, workspaceDir)
+	}
+	return nil
+}
+
+// newTestWorker creates a ClaudeCodeWorker with injected mocks for hermetic tests.
+func newTestWorker(id string, queue *mockQueue, backend *mockBackend, ws *mockWorkspace, qg *mockQualityGate) *ClaudeCodeWorker {
+	w := NewClaudeCodeWorker(id, taskqueue.TierClaude, queue, backend, "/tmp/projects")
+	w.workspaceMgr = ws
+	w.qualityGate = qg
+	return w
 }
 
 // TestNewClaudeCodeWorker tests worker initialization.
@@ -206,16 +249,19 @@ func TestClaim(t *testing.T) {
 	}
 }
 
-// TestExecute tests task execution with mocked backend.
+// TestExecute tests task execution with mocked backend, workspace, and quality gate.
+// All real git, filesystem, and tool invocations are eliminated via injected fakes.
 func TestExecute(t *testing.T) {
 	tests := []struct {
-		name        string
-		task        *taskqueue.Task
-		executeFunc func(ctx context.Context, prompt string, model string) (string, error)
-		updateFunc  func(ctx context.Context, task *taskqueue.Task) error
-		wantSuccess bool
-		wantBranch  string
-		wantPR      int
+		name         string
+		task         *taskqueue.Task
+		executeFunc  func(ctx context.Context, prompt string, model string) (string, error)
+		updateFunc   func(ctx context.Context, task *taskqueue.Task) error
+		prepareFunc  func(ctx context.Context, task *taskqueue.Task) (string, error)
+		validateFunc func(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error
+		wantSuccess  bool
+		wantBranch   string
+		wantPR       int
 	}{
 		{
 			name: "successful execution",
@@ -235,12 +281,18 @@ func TestExecute(t *testing.T) {
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
 			},
+			prepareFunc: func(ctx context.Context, task *taskqueue.Task) (string, error) {
+				return "/tmp/workspace/task-1", nil
+			},
+			validateFunc: func(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error {
+				return nil
+			},
 			wantSuccess: true,
 			wantBranch:  "feature/KAI-123-add-feature",
 			wantPR:      456,
 		},
 		{
-			name: "LLM execution fails",
+			name: "workspace preparation fails",
 			task: &taskqueue.Task{
 				ID:          "task-2",
 				IssueNumber: 124,
@@ -251,8 +303,33 @@ func TestExecute(t *testing.T) {
 				Status:      taskqueue.StatusClaimed,
 				WorkerID:    "worker-1",
 			},
+			prepareFunc: func(ctx context.Context, task *taskqueue.Task) (string, error) {
+				return "", fmt.Errorf("git clone failed: auth error")
+			},
+			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
+				return nil
+			},
+			wantSuccess: false,
+			wantBranch:  "",
+			wantPR:      0,
+		},
+		{
+			name: "LLM execution fails",
+			task: &taskqueue.Task{
+				ID:          "task-3",
+				IssueNumber: 125,
+				RepoOwner:   "owner",
+				RepoName:    "repo",
+				Title:       "Fix bug",
+				Description: "Fix the bug",
+				Status:      taskqueue.StatusClaimed,
+				WorkerID:    "worker-1",
+			},
 			executeFunc: func(ctx context.Context, prompt string, model string) (string, error) {
 				return "", fmt.Errorf("LLM service unavailable")
+			},
+			prepareFunc: func(ctx context.Context, task *taskqueue.Task) (string, error) {
+				return "/tmp/workspace/task-3", nil
 			},
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
@@ -264,8 +341,8 @@ func TestExecute(t *testing.T) {
 		{
 			name: "missing branch name in response",
 			task: &taskqueue.Task{
-				ID:          "task-3",
-				IssueNumber: 125,
+				ID:          "task-4",
+				IssueNumber: 126,
 				RepoOwner:   "owner",
 				RepoName:    "repo",
 				Title:       "Refactor code",
@@ -275,6 +352,37 @@ func TestExecute(t *testing.T) {
 			},
 			executeFunc: func(ctx context.Context, prompt string, model string) (string, error) {
 				return "Implementation complete but no branch info", nil
+			},
+			prepareFunc: func(ctx context.Context, task *taskqueue.Task) (string, error) {
+				return "/tmp/workspace/task-4", nil
+			},
+			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
+				return nil
+			},
+			wantSuccess: false,
+			wantBranch:  "",
+			wantPR:      0,
+		},
+		{
+			name: "quality gates fail",
+			task: &taskqueue.Task{
+				ID:          "task-5",
+				IssueNumber: 127,
+				RepoOwner:   "owner",
+				RepoName:    "repo",
+				Title:       "Add feature",
+				Description: "Add the feature",
+				Status:      taskqueue.StatusClaimed,
+				WorkerID:    "worker-1",
+			},
+			executeFunc: func(ctx context.Context, prompt string, model string) (string, error) {
+				return "Branch: feature/issue-127-add-feature\nPR: #200", nil
+			},
+			prepareFunc: func(ctx context.Context, task *taskqueue.Task) (string, error) {
+				return "/tmp/workspace/task-5", nil
+			},
+			validateFunc: func(ctx context.Context, ruleset *conventions.Ruleset, workspaceDir string) error {
+				return fmt.Errorf("tests failed: 2 failures")
 			},
 			updateFunc: func(ctx context.Context, task *taskqueue.Task) error {
 				return nil
@@ -292,7 +400,10 @@ func TestExecute(t *testing.T) {
 			backend := newMockBackend("test-backend", []string{"test-model"})
 			backend.executeFunc = tt.executeFunc
 
-			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			ws := &mockWorkspace{prepareFunc: tt.prepareFunc}
+			qg := &mockQualityGate{validateFunc: tt.validateFunc}
+
+			worker := newTestWorker("worker-1", queue, backend, ws, qg)
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
@@ -418,11 +529,6 @@ func TestHealth(t *testing.T) {
 
 // TestBuildPrompt tests prompt construction.
 func TestBuildPrompt(t *testing.T) {
-	// Create a minimal test setup (conventions parsing will use defaults if files don't exist)
-	queue := newMockQueue()
-	backend := newMockBackend("test-backend", []string{"test-model"})
-	worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
-
 	task := &taskqueue.Task{
 		ID:          "task-1",
 		IssueNumber: 123,
@@ -444,7 +550,7 @@ func TestBuildPrompt(t *testing.T) {
 		TDDRequired:    true,
 	}
 
-	prompt := buildPromptForTest(worker, task, ruleset)
+	prompt := buildPromptForTest(task, ruleset)
 
 	// Verify prompt contains key elements
 	requiredElements := []string{
@@ -586,7 +692,7 @@ type testRuleset struct {
 }
 
 // buildPromptForTest is a test helper that builds a prompt with a simple ruleset.
-func buildPromptForTest(w *ClaudeCodeWorker, task *taskqueue.Task, ruleset *testRuleset) string {
+func buildPromptForTest(task *taskqueue.Task, ruleset *testRuleset) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")
