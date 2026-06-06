@@ -1,0 +1,3 @@
+@echo off
+echo Starting Antigravity Bridge Server...
+go run cmd/antigravity-bridge/main.go

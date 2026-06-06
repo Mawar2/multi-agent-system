@@ -29,3 +29,7 @@ Thumbs.db
 .env
 orchestrator.yml  # User-specific config (not in repo)
 projects/
+
+# Antigravity session credentials (never commit real tokens)
+.env.antigravity
+antigravity-csrf-problem.json

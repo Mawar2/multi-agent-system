@@ -326,7 +326,8 @@ jq -r 'select(.ErrorMsg | contains("Max review iterations"))' tasks/*.json | wc 
 **`internal/worker/claudecode.go`** (`ClaudeCodeWorker`, `NewClaudeCodeWorker`)
 - Implements the `Worker` interface (`worker.go`): Claim / Execute / Release / Health / ID / Tier
 - Claims tasks, prepares workspace, executes LLM, runs quality gates, creates PR
-- ⚠️ **All tiers currently run the same `llm.ClaudeCodeBackend`.** `main.go` constructs every worker (flash, pro, claude) with `llm.NewClaudeCodeBackend()` — the Gemini "tiers" only affect routing/concurrency labels today, not which model executes. The Antigravity/Gemini backend is Phase 2 (not yet wired).
+- **Per-tier backends.** `main.go` now wires backends per tier: the `claude` tier uses `llm.ClaudeCodeBackend` (`claude` CLI); the `gemini-flash`/`gemini-pro` tiers use `llm.LocalAntigravityBackend` (`internal/llm/local_antigravity.go`), which POSTs to the local Antigravity bridge (`cmd/antigravity-bridge`, `http://localhost:8765`) → Gemini via the user's Antigravity subscription. If the bridge isn't reachable at startup, the Gemini tiers fall back to the Claude backend. See `docs/ANTIGRAVITY_INTEGRATION.md`.
+- ⚠️ The bridge returns **text only** (it relays to Antigravity's language server, which runs in *its own* open project). `LocalAntigravityBackend.ExecuteInDir` ignores `workDir` — Gemini does not yet edit the orchestrator's isolated per-worker clones. The autonomous issue→PR loop is still pending (Stage 2).
 
 **`internal/worker/workspace.go`** (157 lines)
 - WorkspaceManager with per-worker isolation
@@ -696,7 +697,7 @@ At the start of every Claude Code session:
 1. **Use `$env:GITHUB_TOKEN`** - already set this session; don't re-parse `$PROFILE`
 2. **Per-worker workspaces** - Each worker gets `./projects/{workerID}/{owner}/{repo}/`
 3. **Quality gates save money** - 30-40% cost reduction by filtering bad PRs
-4. **10 workers total** - 5 flash + 3 pro + 2 claude, but all currently run the Claude Code backend (Gemini is Phase 2)
+4. **10 workers total** - 5 flash + 3 pro + 2 claude; flash/pro route to the local Antigravity bridge (Gemini), claude uses the `claude` CLI, with Claude fallback if the bridge is down
 5. **Main branch is `master`** - Not `main`
 6. **Build with `make build` → `bin/supervisor`** - binary is git-ignored
 7. **This is production infrastructure** - Not a demo, optimize for years of operation

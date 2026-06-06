@@ -100,8 +100,29 @@ func main() {
 func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) []worker.Worker {
 	var workers []worker.Worker
 
-	// Create LLM backend (Claude Code CLI for Phase 1)
-	backend := llm.NewClaudeCodeBackend()
+	// Claude Code CLI backend — always available; used by the claude tier and as
+	// the fallback for the Gemini tiers when the local Antigravity bridge is down.
+	claudeBackend := llm.NewClaudeCodeBackend()
+
+	// Resolve the backends for the Gemini tiers. Prefer the local Antigravity
+	// bridge (Gemini via the user's paid subscription, zero API cost). If the
+	// bridge isn't reachable, fall back to the Claude Code CLI backend so the
+	// system still runs.
+	var flashBackend, proBackend llm.LLMBackend = claudeBackend, claudeBackend
+	fmt.Println("Attempting to connect to local Antigravity CLI...")
+	if fb, err := llm.NewLocalAntigravityBackend("gemini-3.5-flash"); err != nil {
+		fmt.Printf("  Local Antigravity bridge unavailable: %v\n", err)
+		fmt.Println("  Gemini-tier workers will fall back to the Claude Code CLI backend.")
+	} else {
+		flashBackend = fb
+		// Bridge is up, so the pro backend connects too (separate instance so the
+		// pro tier selects the "pro" model via Models()[0]).
+		if pb, err := llm.NewLocalAntigravityBackend("gemini-3.5-pro"); err == nil {
+			proBackend = pb
+		}
+		fmt.Println("✓ Connected to local Antigravity CLI (using your paid subscription)")
+		fmt.Println("  Gemini workers will use: Local Antigravity CLI")
+	}
 
 	// Gemini Flash workers
 	for i := 0; i < config.WorkerTiers.GeminiFlash.MaxWorkers; i++ {
@@ -110,7 +131,7 @@ func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) [
 			workerID,
 			taskqueue.TierGeminiFlash,
 			queue,
-			backend,
+			flashBackend,
 			"./projects", // Project checkout directory
 		)
 		workers = append(workers, w)
@@ -123,7 +144,7 @@ func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) [
 			workerID,
 			taskqueue.TierGeminiPro,
 			queue,
-			backend,
+			proBackend,
 			"./projects",
 		)
 		workers = append(workers, w)
@@ -136,7 +157,7 @@ func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) [
 			workerID,
 			taskqueue.TierClaude,
 			queue,
-			backend,
+			claudeBackend,
 			"./projects",
 		)
 		workers = append(workers, w)
