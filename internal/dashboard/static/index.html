@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Agent System Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242838;
+      --border: #2d3148;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    .dot.live { animation: pulse 2s ease-in-out infinite; }
+    .dot.error { background: var(--red); animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Layout */
+    main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 20px 24px;
+    }
+
+    .section { margin-bottom: 24px; }
+
+    .section-header {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* Stat cards */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+    }
+
+    .stat-card .label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .stat-card .value {
+      font-size: 30px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .stat-card .sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* Workers grid */
+    .workers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+
+    .worker-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .worker-card.unhealthy {
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+
+    .worker-name {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.ok { background: var(--green); }
+    .status-dot.err { background: var(--red); }
+
+    .tier-tag {
+      font-size: 10px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 2px 6px;
+      margin-bottom: 10px;
+      display: inline-block;
+    }
+
+    .worker-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    .metric {
+      text-align: center;
+      padding: 4px;
+      background: var(--surface2);
+      border-radius: 4px;
+    }
+
+    .metric-val {
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .metric-val.done { color: var(--green); }
+    .metric-val.fail { color: var(--red); }
+
+    .metric-lbl {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    /* Two-column layout */
+    .split {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .split { grid-template-columns: 1fr; }
+    }
+
+    /* Queue breakdown */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-body { padding: 16px; }
+
+    .queue-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--surface2);
+      display: flex;
+      overflow: hidden;
+      gap: 2px;
+      margin-bottom: 14px;
+    }
+
+    .bar-seg {
+      height: 100%;
+      transition: width 0.4s ease;
+      min-width: 2px;
+    }
+
+    .queue-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .queue-row:last-child { border-bottom: none; }
+
+    .queue-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .q-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .queue-count {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .queue-total {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* Tasks table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 9px 14px;
+      text-align: left;
+    }
+
+    tbody tr { border-top: 1px solid var(--border); }
+
+    tbody tr:hover { background: var(--surface2); }
+
+    tbody td {
+      padding: 9px 14px;
+      font-size: 13px;
+    }
+
+    .td-title {
+      max-width: 0;
+      width: 50%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .empty-row td {
+      padding: 20px 14px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* Status badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-pending    { background: rgba(234,179,8,0.15);  color: var(--yellow); }
+    .badge-claimed    { background: rgba(59,130,246,0.15); color: var(--blue); }
+    .badge-in_progress{ background: rgba(99,102,241,0.15); color: var(--accent); }
+    .badge-review     { background: rgba(168,85,247,0.15); color: var(--purple); }
+    .badge-complete   { background: rgba(34,197,94,0.15);  color: var(--green); }
+    .badge-failed     { background: rgba(239,68,68,0.15);  color: var(--red); }
+
+    .text-muted { color: var(--text-muted); }
+
+    /* Error banner */
+    #error-banner {
+      display: none;
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.4);
+      border-radius: 8px;
+      padding: 10px 16px;
+      color: var(--red);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Multi-Agent System</h1>
+    <div class="header-right">
+      <div class="live-indicator">
+        <div class="dot live" id="status-dot"></div>
+        <span id="last-updated">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div id="error-banner"></div>
+
+    <!-- Stats -->
+    <div class="section">
+      <div class="section-header">Overview</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="label">Total Tasks</div>
+          <div class="value" id="stat-total">—</div>
+          <div class="sub">All time</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Success Rate</div>
+          <div class="value" id="stat-success">—</div>
+          <div class="sub">Completed vs failed</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Queue Depth</div>
+          <div class="value" id="stat-depth">—</div>
+          <div class="sub">Active work items</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Cost Savings</div>
+          <div class="value" id="stat-savings">—</div>
+          <div class="sub">Quality gate filtering</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workers -->
+    <div class="section">
+      <div class="section-header">Workers (<span id="worker-count">0</span>)</div>
+      <div class="workers-grid" id="workers-grid">
+        <div class="worker-card text-muted" style="font-size:13px">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Queue + Tasks -->
+    <div class="section">
+      <div class="split">
+        <div>
+          <div class="section-header">Queue Breakdown</div>
+          <div class="panel">
+            <div class="panel-body">
+              <div class="queue-bar" id="queue-bar"></div>
+              <div id="queue-rows"></div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="section-header">Recent Tasks (last 30)</div>
+          <div class="panel">
+            <table>
+              <thead>
+                <tr>
+                  <th>Issue</th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Worker</th>
+                  <th>Tier</th>
+                </tr>
+              </thead>
+              <tbody id="tasks-tbody">
+                <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    'use strict';
+
+    const TIERS = ['gemini-flash', 'gemini-pro', 'claude'];
+
+    const QUEUE_COLORS = {
+      pending:     '#eab308',
+      claimed:     '#3b82f6',
+      in_progress: '#6366f1',
+      review:      '#a855f7',
+      complete:    '#22c55e',
+      failed:      '#ef4444',
+    };
+
+    const QUEUE_SEGMENTS = ['pending', 'claimed', 'in_progress', 'review', 'complete', 'failed'];
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function pct(v) { return v.toFixed(1) + '%'; }
+    function usd(v) { return '$' + v.toFixed(2); }
+
+    function tierLabel(n) { return TIERS[n] || '—'; }
+
+    function renderWorkers(workers) {
+      document.getElementById('worker-count').textContent = workers.length;
+      const grid = document.getElementById('workers-grid');
+      if (!workers.length) {
+        grid.innerHTML = '<div class="worker-card text-muted" style="font-size:13px">No workers registered</div>';
+        return;
+      }
+      grid.innerHTML = workers.map(w => `
+        <div class="worker-card${w.healthy ? '' : ' unhealthy'}">
+          <div class="worker-name">
+            <div class="status-dot ${w.healthy ? 'ok' : 'err'}"></div>
+            ${esc(w.id)}
+          </div>
+          <div class="tier-tag">${esc(w.tier)}</div>
+          <div class="worker-metrics">
+            <div class="metric">
+              <div class="metric-val done">${w.tasks_completed}</div>
+              <div class="metric-lbl">Done</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val fail">${w.tasks_failed}</div>
+              <div class="metric-lbl">Failed</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderQueue(queue) {
+      const total = queue.total || 1;
+
+      const bar = document.getElementById('queue-bar');
+      bar.innerHTML = QUEUE_SEGMENTS
+        .filter(k => queue[k] > 0)
+        .map(k => `<div class="bar-seg" style="width:${(queue[k]/total*100).toFixed(2)}%;background:${QUEUE_COLORS[k]}"></div>`)
+        .join('');
+
+      const rows = document.getElementById('queue-rows');
+      rows.innerHTML = QUEUE_SEGMENTS.map(k => `
+        <div class="queue-row">
+          <div class="queue-label">
+            <div class="q-dot" style="background:${QUEUE_COLORS[k]}"></div>
+            ${k.replace('_', ' ')}
+          </div>
+          <span class="queue-count" style="color:${QUEUE_COLORS[k]}">${queue[k] || 0}</span>
+        </div>
+      `).join('') + `
+        <div class="queue-row">
+          <div class="queue-label" style="font-weight:600;color:var(--text)">Total</div>
+          <span class="queue-total">${queue.total || 0}</span>
+        </div>
+      `;
+    }
+
+    function renderTasks(tasks) {
+      const tbody = document.getElementById('tasks-tbody');
+      if (!tasks || !tasks.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No tasks yet</td></tr>';
+        return;
+      }
+
+      const sorted = tasks.slice().sort((a, b) => {
+        const ta = a.completed_at || a.started_at || a.claimed_at || '';
+        const tb = b.completed_at || b.started_at || b.claimed_at || '';
+        return tb.localeCompare(ta);
+      }).slice(0, 30);
+
+      tbody.innerHTML = sorted.map(t => `
+        <tr>
+          <td class="text-muted">${t.issue_number ? '#' + t.issue_number : '—'}</td>
+          <td class="td-title" title="${esc(t.title)}">${esc(t.title) || '—'}</td>
+          <td><span class="badge badge-${esc(t.status)}">${esc(t.status)}</span></td>
+          <td class="text-muted">${esc(t.worker_id) || '—'}</td>
+          <td class="text-muted">${esc(tierLabel(t.tier))}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function refresh() {
+      const dot = document.getElementById('status-dot');
+      const updated = document.getElementById('last-updated');
+      const errBanner = document.getElementById('error-banner');
+
+      try {
+        const [statusResp, tasksResp] = await Promise.all([
+          fetch('/api/status'),
+          fetch('/api/tasks'),
+        ]);
+
+        if (!statusResp.ok) throw new Error('status HTTP ' + statusResp.status);
+        if (!tasksResp.ok)  throw new Error('tasks HTTP ' + tasksResp.status);
+
+        const [status, tasks] = await Promise.all([statusResp.json(), tasksResp.json()]);
+
+        errBanner.style.display = 'none';
+        dot.className = 'dot live';
+        updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+        document.getElementById('stat-total').textContent   = status.stats.total_tasks;
+        document.getElementById('stat-success').textContent = pct(status.stats.success_rate);
+        document.getElementById('stat-depth').textContent   = status.queue.depth;
+        document.getElementById('stat-savings').textContent = usd(status.stats.estimated_cost_savings);
+
+        renderWorkers(status.workers || []);
+        renderQueue(status.queue);
+        renderTasks(tasks);
+
+      } catch (e) {
+        dot.className = 'dot error';
+        updated.textContent = 'Error';
+        errBanner.style.display = 'block';
+        errBanner.textContent = 'Failed to fetch data: ' + e.message;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
