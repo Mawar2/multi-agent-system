@@ -1,0 +1,24 @@
+# Git metadata
+.git
+.gitignore
+
+# Runtime data (populated at run time, not part of the image)
+tasks/
+projects/
+
+# Config (mounted as volume at runtime)
+orchestrator.yml
+
+# Documentation
+docs/
+
+# Build artifacts
+bin/
+*.exe
+
+# Test fixtures
+test/
+
+# Editor and OS noise
+.vscode/
+*.DS_Store
