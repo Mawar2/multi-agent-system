@@ -91,12 +91,12 @@ func main() {
 		created++
 	}
 
-	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Printf("Backfill complete!\n")
 	fmt.Printf("  Created: %d tasks\n", created)
 	fmt.Printf("  Skipped: %d tasks (drafts)\n", skipped)
 	fmt.Printf("  Total:   %d PRs\n", len(prs))
-	fmt.Printf(strings.Repeat("=", 60) + "\n")
+	fmt.Println(strings.Repeat("=", 60))
 }
 
 // inferComplexity estimates task complexity based on PR size.

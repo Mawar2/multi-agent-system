@@ -1,0 +1,35 @@
+services:
+  supervisor:
+    build: .
+    image: mawar2/multi-agent-system:latest
+    entrypoint: ["/supervisor"]
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - tasks:/tasks
+      - workspaces:/workspaces
+      - ./orchestrator.yml:/orchestrator.yml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+
+  hunter:
+    build: .
+    image: mawar2/multi-agent-system:latest
+    entrypoint: ["/hunter"]
+    profiles:
+      - hunt
+    environment:
+      - SAM_API_KEY=${SAM_API_KEY}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tasks:
+  workspaces:
