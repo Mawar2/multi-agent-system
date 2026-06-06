@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Agent System Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;}
+body{font-family:ui-monospace,'Cascadia Code','Source Code Pro',Menlo,Consolas,monospace;background:#0d1117;color:#c9d1d9;margin:0;padding:0;}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;}
+.header h1{font-size:16px;color:#58a6ff;margin:0;}
+.meta{font-size:12px;color:#8b949e;}
+.main{padding:24px;max-width:1400px;margin:0 auto;}
+.section{margin-bottom:24px;}
+.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin-bottom:12px;}
+.stats-row{display:flex;gap:16px;flex-wrap:wrap;}
+.stat-card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px 16px;min-width:140px;flex:1;}
+.stat-label{font-size:11px;color:#8b949e;margin-bottom:4px;}
+.stat-value{font-size:24px;font-weight:600;color:#f0f6fc;}
+.stat-value.green{color:#3fb950;}
+.stat-value.yellow{color:#d29922;}
+.stat-value.blue{color:#58a6ff;}
+.worker-grid{display:flex;gap:12px;flex-wrap:wrap;}
+.worker-card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;min-width:180px;display:flex;align-items:flex-start;gap:10px;}
+.health-dot{width:10px;height:10px;border-radius:50%;margin-top:3px;flex-shrink:0;}
+.health-dot.healthy{background:#3fb950;}
+.health-dot.unhealthy{background:#f85149;}
+.worker-info{flex:1;min-width:0;}
+.worker-id{font-size:13px;font-weight:600;color:#f0f6fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.worker-tier{font-size:11px;color:#8b949e;}
+.worker-stats{font-size:11px;color:#8b949e;margin-top:4px;}
+.worker-stats .ok{color:#3fb950;}
+.worker-stats .fail{color:#f85149;}
+.queue-bar{display:flex;height:20px;border-radius:4px;overflow:hidden;background:#21262d;margin-bottom:12px;}
+.queue-legend{display:flex;gap:16px;flex-wrap:wrap;}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:12px;}
+.legend-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0;}
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+thead th{background:#161b22;color:#8b949e;font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid #30363d;cursor:pointer;user-select:none;white-space:nowrap;}
+thead th:hover{color:#c9d1d9;}
+thead th.sorted{color:#58a6ff;}
+tbody tr:hover{background:#161b22;}
+td{padding:8px 12px;border-bottom:1px solid #21262d;white-space:nowrap;}
+.status-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600;}
+.status-pending{background:#21262d;color:#8b949e;}
+.status-claimed{background:#1c2d4a;color:#79c0ff;}
+.status-in_progress{background:#2d1f00;color:#e3b341;}
+.status-review{background:#2d1d5a;color:#c9aeff;}
+.status-complete{background:#12261e;color:#3fb950;}
+.status-failed{background:#2c1c1c;color:#ffa198;}
+.tier-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:11px;background:#21262d;color:#8b949e;}
+.error-banner{background:#2c1c1c;border:1px solid #f85149;border-radius:6px;padding:12px;color:#ffa198;margin-bottom:16px;display:none;}
+.error-banner.visible{display:block;}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Multi-Agent System Dashboard</h1>
+  <div class="meta" id="meta">Connecting...</div>
+</div>
+<div class="main">
+  <div class="error-banner" id="error-banner"></div>
+
+  <div class="section">
+    <div class="section-title">Overview</div>
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Total Tasks</div><div class="stat-value" id="stat-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Success Rate</div><div class="stat-value green" id="stat-success">—</div></div>
+      <div class="stat-card"><div class="stat-label">Quality Gate Failures</div><div class="stat-value yellow" id="stat-qg">—</div></div>
+      <div class="stat-card"><div class="stat-label">Est. Savings</div><div class="stat-value blue" id="stat-savings">—</div></div>
+      <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value" id="stat-uptime">—</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Workers</div>
+    <div class="worker-grid" id="worker-grid"><div style="color:#8b949e;font-size:13px;">Loading...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Queue Breakdown</div>
+    <div class="queue-bar" id="queue-bar"></div>
+    <div class="queue-legend" id="queue-legend"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Recent Tasks</div>
+    <div class="table-wrap">
+      <table id="tasks-table">
+        <thead>
+          <tr>
+            <th data-col="issue_number">Issue #</th>
+            <th data-col="title">Title</th>
+            <th data-col="status">Status</th>
+            <th data-col="tier">Tier</th>
+            <th data-col="worker_id">Worker</th>
+            <th data-col="pr_number">PR</th>
+            <th data-col="completed_at">Completed</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body">
+          <tr><td colspan="7" style="color:#8b949e;text-align:center;padding:24px;">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+var POLL = 5000;
+var sortCol = 'completed_at';
+var sortAsc = false;
+var tasksData = [];
+
+var COLORS = {
+  pending: '#8b949e',
+  claimed: '#1f6feb',
+  in_progress: '#d29922',
+  review: '#a371f7',
+  complete: '#3fb950',
+  failed: '#f85149'
+};
+
+var TIERS = ['flash', 'pro', 'claude'];
+
+function fmtDuration(s) {
+  s = s | 0;
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+function fmtDate(iso) {
+  if (!iso || iso.startsWith('0001')) return '—';
+  var d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleTimeString();
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fetchJSON(url, cb) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', url);
+  xhr.onload = function() {
+    if (xhr.status === 200) cb(null, JSON.parse(xhr.responseText));
+    else cb(new Error('HTTP ' + xhr.status));
+  };
+  xhr.onerror = function() { cb(new Error('Network error')); };
+  xhr.send();
+}
+
+function renderStats(data) {
+  var q = data.queue, sys = data.system;
+  document.getElementById('stat-total').textContent = q.total;
+  document.getElementById('stat-success').textContent =
+    (q.complete + q.failed > 0) ? (sys.success_rate * 100).toFixed(1) + '%' : '—';
+  document.getElementById('stat-qg').textContent = sys.quality_gate_failures;
+  document.getElementById('stat-savings').textContent = '$' + sys.estimated_savings_usd.toFixed(2);
+  document.getElementById('stat-uptime').textContent = fmtDuration(sys.uptime_seconds);
+}
+
+function renderWorkers(workers) {
+  var grid = document.getElementById('worker-grid');
+  if (!workers || workers.length === 0) {
+    grid.innerHTML = '<div style="color:#8b949e;font-size:13px;">No workers running</div>';
+    return;
+  }
+  grid.innerHTML = workers.map(function(w) {
+    return '<div class="worker-card">' +
+      '<div class="health-dot ' + (w.healthy ? 'healthy' : 'unhealthy') + '"></div>' +
+      '<div class="worker-info">' +
+        '<div class="worker-id" title="' + esc(w.id) + '">' + esc(w.id) + '</div>' +
+        '<div class="worker-tier">' + esc(w.tier) + '</div>' +
+        '<div class="worker-stats">' +
+          '<span class="ok">' + w.tasks_completed + ' done</span> &middot; ' +
+          '<span class="fail">' + w.tasks_failed + ' failed</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderQueue(queue) {
+  var total = queue.total || 1;
+  var segs = [
+    {key:'pending',  label:'Pending',     val:queue.pending},
+    {key:'claimed',  label:'Claimed',     val:queue.claimed},
+    {key:'in_progress', label:'In Progress', val:queue.in_progress},
+    {key:'review',   label:'Review',      val:queue.review},
+    {key:'complete', label:'Complete',    val:queue.complete},
+    {key:'failed',   label:'Failed',      val:queue.failed}
+  ];
+  var bar = document.getElementById('queue-bar');
+  bar.innerHTML = segs.map(function(s) {
+    var pct = (s.val / total * 100).toFixed(1);
+    return '<div style="width:' + pct + '%;background:' + COLORS[s.key] + ';transition:width .3s" title="' + s.label + ': ' + s.val + '"></div>';
+  }).join('');
+  var legend = document.getElementById('queue-legend');
+  legend.innerHTML = segs.map(function(s) {
+    return '<div class="legend-item">' +
+      '<div class="legend-dot" style="background:' + COLORS[s.key] + '"></div>' +
+      '<span>' + s.label + ': <strong>' + s.val + '</strong></span>' +
+    '</div>';
+  }).join('');
+}
+
+function renderTasks(tasks) {
+  var tbody = document.getElementById('tasks-body');
+  if (!tasks || tasks.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:24px;">No tasks yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tasks.map(function(t) {
+    var sc = 'status-' + (t.status || 'pending').replace(/\s+/g,'_');
+    var tier = (typeof t.tier === 'number' && TIERS[t.tier]) ? TIERS[t.tier] : '—';
+    return '<tr>' +
+      '<td>#' + (t.issue_number || '—') + '</td>' +
+      '<td style="max-width:280px;overflow:hidden;text-overflow:ellipsis" title="' + esc(t.title) + '">' + esc(t.title || '—') + '</td>' +
+      '<td><span class="status-badge ' + sc + '">' + esc(t.status || '—') + '</span></td>' +
+      '<td><span class="tier-badge">' + esc(tier) + '</span></td>' +
+      '<td>' + esc(t.worker_id || '—') + '</td>' +
+      '<td>' + (t.pr_number ? '#' + t.pr_number : '—') + '</td>' +
+      '<td>' + fmtDate(t.completed_at) + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function applySort() {
+  var sorted = tasksData.slice().sort(function(a, b) {
+    var av = a[sortCol], bv = b[sortCol];
+    if (av == null) av = '';
+    if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number') return sortAsc ? av - bv : bv - av;
+    av = String(av); bv = String(bv);
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  renderTasks(sorted);
+}
+
+document.querySelectorAll('thead th[data-col]').forEach(function(th) {
+  th.addEventListener('click', function() {
+    if (sortCol === th.dataset.col) sortAsc = !sortAsc;
+    else { sortCol = th.dataset.col; sortAsc = false; }
+    document.querySelectorAll('thead th').forEach(function(h) {
+      h.classList.toggle('sorted', h.dataset.col === sortCol);
+    });
+    applySort();
+  });
+});
+
+function poll() {
+  var done = 0;
+  var statusData = null, tasksArr = null, errMsg = null;
+
+  function finish() {
+    done++;
+    if (done < 2) return;
+    if (errMsg) {
+      document.getElementById('error-banner').textContent = 'Connection error: ' + errMsg;
+      document.getElementById('error-banner').classList.add('visible');
+      document.getElementById('meta').textContent = 'Connection failed';
+      return;
+    }
+    document.getElementById('error-banner').classList.remove('visible');
+    renderStats(statusData);
+    renderWorkers(statusData.workers);
+    renderQueue(statusData.queue);
+    tasksData = tasksArr;
+    renderTasks(tasksData);
+    document.getElementById('meta').textContent =
+      'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh: 5s';
+  }
+
+  fetchJSON('/api/status', function(err, data) {
+    if (err) errMsg = err.message;
+    else statusData = data;
+    finish();
+  });
+  fetchJSON('/api/tasks', function(err, data) {
+    if (err && !errMsg) errMsg = err.message;
+    else tasksArr = data || [];
+    finish();
+  });
+}
+
+poll();
+setInterval(poll, POLL);
+</script>
+</body>
+</html>
