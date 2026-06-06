@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Agent System — Observability Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1d2e;
+      border-bottom: 1px solid #2d3148;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 600; color: #a78bfa; }
+    header .subtitle { font-size: 13px; color: #64748b; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #1a1d2e;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-card .label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .stat-card .value { font-size: 28px; font-weight: 700; }
+    .stat-card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .value.green { color: #22c55e; }
+    .value.blue  { color: #60a5fa; }
+    .value.amber { color: #f59e0b; }
+    .value.red   { color: #f87171; }
+
+    /* Section */
+    section { margin-bottom: 28px; }
+    section h2 { font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase;
+                 letter-spacing: .5px; margin-bottom: 12px; }
+
+    /* Queue bar */
+    .queue-bar { height: 24px; border-radius: 6px; display: flex; overflow: hidden; gap: 2px; background: #0f1117; }
+    .queue-seg { height: 100%; transition: width .4s; display: flex; align-items: center;
+                 justify-content: center; font-size: 11px; font-weight: 600; color: #fff;
+                 min-width: 0; overflow: hidden; }
+    .queue-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+    /* Worker grid */
+    .worker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .worker-card {
+      background: #1a1d2e;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .worker-card .wid { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    .worker-card .wtier { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .worker-card .wstats { display: flex; gap: 16px; margin-top: 10px; }
+    .wstat .wlabel { font-size: 10px; color: #64748b; }
+    .wstat .wval { font-size: 18px; font-weight: 700; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot.healthy { background: #22c55e; }
+    .dot.unhealthy { background: #f87171; }
+    .empty-workers { color: #64748b; font-size: 13px; }
+
+    /* Tasks table */
+    .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #2d3148; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { background: #1a1d2e; }
+    thead th {
+      padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600;
+      color: #64748b; text-transform: uppercase; letter-spacing: .4px;
+      cursor: pointer; user-select: none; white-space: nowrap;
+    }
+    thead th:hover { color: #a78bfa; }
+    tbody tr { border-top: 1px solid #2d3148; }
+    tbody tr:hover { background: #1a1d2e; }
+    td { padding: 10px 14px; color: #cbd5e1; white-space: nowrap; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 99px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge.pending    { background: #1e293b; color: #94a3b8; }
+    .badge.claimed    { background: #1e3a5f; color: #60a5fa; }
+    .badge.in_progress{ background: #1e3a5f; color: #a78bfa; }
+    .badge.review     { background: #1a2e1a; color: #4ade80; }
+    .badge.complete   { background: #14532d; color: #22c55e; }
+    .badge.failed     { background: #3b0a0a; color: #f87171; }
+
+    .error-tip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: #f87171; }
+    .empty-msg { padding: 28px; text-align: center; color: #475569; font-size: 13px; }
+
+    .refresh-hint { font-size: 11px; color: #475569; margin-bottom: 8px; text-align: right; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="pulse" id="pulse"></div>
+  <div>
+    <h1>Multi-Agent System</h1>
+    <div class="subtitle">Observability Dashboard — auto-refreshes every 5s</div>
+  </div>
+</header>
+
+<main>
+  <!-- Overview stats -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">Total Tasks</div>
+      <div class="value blue" id="stat-total">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Success Rate</div>
+      <div class="value green" id="stat-rate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Quality Gate Failures</div>
+      <div class="value amber" id="stat-qg">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Estimated Savings</div>
+      <div class="value green" id="stat-savings">—</div>
+      <div class="sub">vs. no quality gates</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Active Workers</div>
+      <div class="value blue" id="stat-workers">—</div>
+    </div>
+  </div>
+
+  <!-- Queue breakdown -->
+  <section>
+    <h2>Queue Breakdown</h2>
+    <div class="queue-bar" id="queue-bar">
+      <div class="queue-seg" id="seg-pending"  style="background:#475569;width:0"></div>
+      <div class="queue-seg" id="seg-claimed"  style="background:#3b82f6;width:0"></div>
+      <div class="queue-seg" id="seg-inprog"   style="background:#8b5cf6;width:0"></div>
+      <div class="queue-seg" id="seg-review"   style="background:#10b981;width:0"></div>
+      <div class="queue-seg" id="seg-complete" style="background:#22c55e;width:0"></div>
+      <div class="queue-seg" id="seg-failed"   style="background:#ef4444;width:0"></div>
+    </div>
+    <div class="queue-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#475569"></div><span id="leg-pending">Pending (0)</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div><span id="leg-claimed">Claimed (0)</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div><span id="leg-inprog">In Progress (0)</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div><span id="leg-review">Review (0)</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div><span id="leg-complete">Complete (0)</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div><span id="leg-failed">Failed (0)</span></div>
+    </div>
+  </section>
+
+  <!-- Workers -->
+  <section>
+    <h2>Workers</h2>
+    <div class="worker-grid" id="worker-grid">
+      <div class="empty-workers">Loading workers…</div>
+    </div>
+  </section>
+
+  <!-- Recent tasks -->
+  <section>
+    <h2>Recent Tasks (last 30)</h2>
+    <div class="refresh-hint" id="last-refresh">Last refresh: —</div>
+    <div class="table-wrap">
+      <table id="tasks-table">
+        <thead>
+          <tr>
+            <th onclick="sortBy('issue_number')">Issue #</th>
+            <th onclick="sortBy('title')">Title</th>
+            <th onclick="sortBy('repo_name')">Repo</th>
+            <th onclick="sortBy('status')">Status</th>
+            <th onclick="sortBy('tier')">Tier</th>
+            <th onclick="sortBy('worker_id')">Worker</th>
+            <th onclick="sortBy('pr_number')">PR</th>
+            <th onclick="sortBy('claimed_at')">Claimed</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body">
+          <tr><td colspan="9" class="empty-msg">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  let tasksData = [];
+  let sortKey = 'claimed_at';
+  let sortAsc = false;
+
+  function fmt(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleTimeString();
+  }
+
+  function badge(status) {
+    return `<span class="badge ${status}">${status}</span>`;
+  }
+
+  function renderWorkers(workers) {
+    const el = document.getElementById('worker-grid');
+    if (!workers || workers.length === 0) {
+      el.innerHTML = '<div class="empty-workers">No workers reported yet.</div>';
+      document.getElementById('stat-workers').textContent = '0';
+      return;
+    }
+    document.getElementById('stat-workers').textContent = workers.filter(w => w.healthy).length + '/' + workers.length;
+    el.innerHTML = workers.map(w => `
+      <div class="worker-card">
+        <div>
+          <span class="dot ${w.healthy ? 'healthy' : 'unhealthy'}"></span>
+          <span class="wid">${w.worker_id}</span>
+        </div>
+        <div class="wtier">${w.tier}</div>
+        <div class="wstats">
+          <div class="wstat"><div class="wlabel">Done</div><div class="wval" style="color:#22c55e">${w.tasks_completed}</div></div>
+          <div class="wstat"><div class="wlabel">Failed</div><div class="wval" style="color:#f87171">${w.tasks_failed}</div></div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderQueue(q) {
+    const total = q.pending + q.claimed + q.in_progress + q.review + q.complete + q.failed || 1;
+    function pct(n) { return (n / total * 100).toFixed(1) + '%'; }
+    const segs = [
+      ['seg-pending',  q.pending,    'leg-pending',  'Pending'],
+      ['seg-claimed',  q.claimed,    'leg-claimed',  'Claimed'],
+      ['seg-inprog',   q.in_progress,'leg-inprog',   'In Progress'],
+      ['seg-review',   q.review,     'leg-review',   'Review'],
+      ['seg-complete', q.complete,   'leg-complete', 'Complete'],
+      ['seg-failed',   q.failed,     'leg-failed',   'Failed'],
+    ];
+    for (const [sid, count, lid, label] of segs) {
+      const el = document.getElementById(sid);
+      el.style.width = pct(count);
+      el.textContent = count > 0 ? count : '';
+      document.getElementById(lid).textContent = `${label} (${count})`;
+    }
+  }
+
+  function renderStats(sys) {
+    document.getElementById('stat-total').textContent   = sys.total_tasks;
+    document.getElementById('stat-rate').textContent    = sys.success_rate.toFixed(1) + '%';
+    document.getElementById('stat-qg').textContent      = sys.quality_gate_failures;
+    document.getElementById('stat-savings').textContent = '$' + sys.estimated_cost_savings.toFixed(2);
+  }
+
+  function renderTasks() {
+    const body = document.getElementById('tasks-body');
+    if (tasksData.length === 0) {
+      body.innerHTML = '<tr><td colspan="9" class="empty-msg">No tasks yet.</td></tr>';
+      return;
+    }
+    const sorted = [...tasksData].sort((a, b) => {
+      let av = a[sortKey] ?? '', bv = b[sortKey] ?? '';
+      if (typeof av === 'number') return sortAsc ? av - bv : bv - av;
+      return sortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
+    body.innerHTML = sorted.map(t => `
+      <tr>
+        <td>#${t.issue_number || '—'}</td>
+        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${t.title || '—'}</td>
+        <td>${t.repo_owner}/${t.repo_name}</td>
+        <td>${badge(t.status)}</td>
+        <td>${t.tier}</td>
+        <td>${t.worker_id || '—'}</td>
+        <td>${t.pr_number ? '<a href="#" style="color:#60a5fa">#' + t.pr_number + '</a>' : '—'}</td>
+        <td>${fmt(t.claimed_at)}</td>
+        <td><span class="error-tip" title="${t.error_msg || ''}">${t.error_msg || ''}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  function sortBy(key) {
+    if (sortKey === key) sortAsc = !sortAsc;
+    else { sortKey = key; sortAsc = true; }
+    renderTasks();
+  }
+
+  async function refresh() {
+    try {
+      const [statusRes, tasksRes] = await Promise.all([
+        fetch('/api/status'),
+        fetch('/api/tasks'),
+      ]);
+      const status = await statusRes.json();
+      tasksData = await tasksRes.json();
+
+      renderStats(status.system);
+      renderQueue(status.queue);
+      renderWorkers(status.workers);
+      renderTasks();
+
+      document.getElementById('last-refresh').textContent =
+        'Last refresh: ' + new Date().toLocaleTimeString();
+      document.getElementById('pulse').style.background = '#22c55e';
+    } catch (e) {
+      document.getElementById('pulse').style.background = '#f87171';
+      console.error('Refresh failed:', e);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

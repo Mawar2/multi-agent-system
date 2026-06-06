@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/dashboard"
 	"github.com/Mawar2/multi-agent-system/internal/llm"
 	"github.com/Mawar2/multi-agent-system/internal/orchestrator"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -18,7 +19,8 @@ import (
 
 func main() {
 	// Parse command-line flags
-	configPath := flag.String("config", "orchestrator.yml", "Path to configuration file")
+	configPath    := flag.String("config", "orchestrator.yml", "Path to configuration file")
+	dashboardAddr := flag.String("dashboard-addr", ":8080", "Dashboard listen address (empty to disable)")
 	flag.Parse()
 
 	// Load configuration
@@ -75,6 +77,17 @@ func main() {
 		fmt.Printf("  - %s/%s\n", proj.RepoOwner, proj.RepoName)
 	}
 	fmt.Println("\nSupervisor running. Press Ctrl+C to stop.")
+
+	// Start dashboard server if enabled
+	if *dashboardAddr != "" {
+		srv := dashboard.NewServer(queue, workers)
+		go func() {
+			fmt.Printf("Dashboard listening on http://%s\n", *dashboardAddr)
+			if err := srv.Listen(*dashboardAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "Dashboard error: %v\n", err)
+			}
+		}()
+	}
 
 	// Start workers
 	for _, w := range workers {
