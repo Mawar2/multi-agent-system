@@ -411,7 +411,18 @@ Tiers carry a `model` string and `max_workers`, NOT a `complexity_range` — the
 
 1. **GITHUB_TOKEN** — already exported in this session; just use `$env:GITHUB_TOKEN`.
 
-2. **Build supervisor:**
+2. **GitHub CLI for PR creation & git auth** — `gh` is installed (machine PATH) and
+   authenticated (account `Mawar2`, via token + keyring). `gh auth setup-git` has
+   configured git's credential helper, so workers clone/pull private repos without
+   prompting. Workers shell git out via `gitCmd` (`internal/worker/workspace.go`),
+   which sets `GIT_TERMINAL_PROMPT=0` so any auth gap fails fast instead of hanging.
+
+3. **Worker autonomy** — the Claude backend runs `claude --print --dangerously-skip-permissions`
+   so the headless agent can edit files and run git/gh/tests in its isolated clone.
+   Override with `CLAUDE_PERMISSION_MODE` (e.g. `acceptEdits`, `plan`) if you want
+   prompts/dry-runs. Gemini-tier workers go through the Antigravity bridge instead.
+
+4. **Build supervisor:**
    ```bash
    cd /c/Users/Owner/OneDrive/Documents/Builder/multi-agent-system
    go build -o supervisor.exe ./cmd/supervisor

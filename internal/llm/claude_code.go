@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -146,8 +147,18 @@ func (b *ClaudeCodeBackend) ExecuteInDir(ctx context.Context, prompt string, mod
 		modelAlias = "opus"
 	}
 
-	// Spawn Claude Code subprocess with --print for non-interactive output
-	cmd := exec.CommandContext(ctx, "claude", "--print", "--model", modelAlias)
+	// Spawn Claude Code subprocess with --print for non-interactive output.
+	//
+	// Workers run headless in isolated per-worker clones (./projects/<worker>/...),
+	// so the agent must be able to edit files and run git/gh/tests without an
+	// interactive permission prompt (which would hang in --print mode). The
+	// permission mode is configurable via CLAUDE_PERMISSION_MODE (e.g. "acceptEdits"
+	// or "plan"); it defaults to bypassing prompts for full autonomy.
+	permFlag := "--dangerously-skip-permissions"
+	if mode := os.Getenv("CLAUDE_PERMISSION_MODE"); mode != "" {
+		permFlag = "--permission-mode=" + mode
+	}
+	cmd := exec.CommandContext(ctx, "claude", "--print", permFlag, "--model", modelAlias)
 
 	// Set working directory if specified
 	if workDir != "" {
