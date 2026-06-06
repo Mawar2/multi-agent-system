@@ -10,6 +10,19 @@ projects:
     commit_pattern: "{ticket}_{description}"
     labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
 
+    # Smart issue filtering — all fields are opt-in; omitting preserves existing behaviour.
+    issue_filter:
+      # skip_if_has_pr: true    # Default true. Set to false to re-process issues that
+      #                         # already have an open PR (e.g. for backfill scenarios).
+
+      # skip_labels:            # Skip issues that carry any of these labels.
+      #   - needs-human-design  # Matching is case-insensitive.
+      #   - blocked
+      #   - wontfix
+
+      # require_acceptance_criteria: false  # Default false. Set to true to skip issues
+      #                                     # that contain no "- [ ]" checklist items.
+
   # Add more projects as needed
   # - name: other-project
   #   repo_owner: YourOrg
@@ -17,6 +30,10 @@ projects:
   #   conventions_path: ./PROJECT_RULES.md
   #   branch_pattern: "{ticket}-{summary}"
   #   commit_pattern: "[{ticket}] {description}"
+  #   issue_filter:
+  #     skip_if_has_pr: true
+  #     skip_labels: [blocked]
+  #     require_acceptance_criteria: true
 
 worker_tiers:
   gemini_flash:
