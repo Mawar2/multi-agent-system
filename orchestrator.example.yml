@@ -10,6 +10,22 @@ projects:
     commit_pattern: "{ticket}_{description}"
     labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
 
+    # Smart issue filtering — all fields are optional; omitting preserves existing behaviour.
+    issue_filter:
+      # Skip issues that already have an open PR (default: true — preserves existing behaviour).
+      skip_if_has_pr: true
+
+      # Skip issues carrying any of these labels (case-insensitive).
+      # Useful for issues that need human design work before automation can proceed.
+      skip_labels:
+        # - needs-human-design
+        # - blocked
+        # - wip
+
+      # Require at least one "- [ ]" acceptance-criteria checkbox in the issue body (default: false).
+      # Enabling this ensures workers receive well-specified issues.
+      require_acceptance_criteria: false
+
   # Add more projects as needed
   # - name: other-project
   #   repo_owner: YourOrg

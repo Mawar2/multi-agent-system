@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -144,23 +145,50 @@ func (s *Supervisor) pollIssues(ctx context.Context) error {
 func (s *Supervisor) processIssue(ctx context.Context, issue *ticket.Issue) error {
 	log.Printf("Supervisor: Processing issue #%d: %s", issue.Number, issue.Title)
 
-	// Check if issue already has a PR
-	prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
-	if err != nil {
-		log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
-		// Continue processing - treat as no PR
-	} else if prStatus != nil {
-		log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
-			issue.Number, prStatus.Number, prStatus.State)
-		return nil
+	// Apply smart issue filters for this repo.
+	filter := s.config.IssueFilterForRepo(issue.RepoOwner, issue.RepoName)
+
+	// Skip issues carrying any of the configured skip labels (case-insensitive).
+	for _, skipLabel := range filter.SkipLabels {
+		for _, issueLabel := range issue.Labels {
+			if strings.EqualFold(skipLabel, issueLabel) {
+				log.Printf("Supervisor: Skipping issue #%d - has skip label '%s'", issue.Number, issueLabel)
+				return nil
+			}
+		}
+	}
+
+	// Skip issues with no acceptance-criteria checklist when required.
+	if filter.RequireAcceptanceCriteria {
+		criteria, err := s.ticketClient.ParseAcceptanceCriteria(issue.Body)
+		if err != nil {
+			log.Printf("Supervisor: Failed to parse acceptance criteria for issue #%d: %v", issue.Number, err)
+		}
+		if len(criteria) == 0 {
+			log.Printf("Supervisor: Skipping issue #%d - no acceptance criteria found", issue.Number)
+			return nil
+		}
+	}
+
+	// Check if issue already has a PR (skipped when skip_if_has_pr: false).
+	if filter.SkipIfHasPR == nil || *filter.SkipIfHasPR {
+		prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
+		if err != nil {
+			log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
+			// Continue processing - treat as no PR
+		} else if prStatus != nil {
+			log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
+				issue.Number, prStatus.Number, prStatus.State)
+			return nil
+		}
 	}
 
 	// Check if issue is already in the queue
-	filter := &taskqueue.TaskFilter{
+	queueFilter := &taskqueue.TaskFilter{
 		RepoOwner: issue.RepoOwner,
 		RepoName:  issue.RepoName,
 	}
-	existingTasks, err := s.queue.List(ctx, filter)
+	existingTasks, err := s.queue.List(ctx, queueFilter)
 	if err != nil {
 		return fmt.Errorf("failed to list existing tasks: %w", err)
 	}
