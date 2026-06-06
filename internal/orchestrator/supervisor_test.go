@@ -668,14 +668,14 @@ func TestCreateFixTask_InheritFields(t *testing.T) {
 	// Simulate creating a fix task (what createFixTask would do)
 	fixTask := &taskqueue.Task{
 		ID:              "fix-task",
-		IssueNumber:     parentTask.IssueNumber,      // Inherit
-		RepoOwner:       parentTask.RepoOwner,        // Inherit
-		RepoName:        parentTask.RepoName,         // Inherit
-		Complexity:      parentTask.Complexity,       // Inherit
-		Tier:            parentTask.Tier,             // Inherit
-		BranchName:      parentTask.BranchName,       // Inherit - same branch!
-		PRNumber:        parentTask.PRNumber,         // Inherit - same PR!
-		ParentTaskID:    parentTask.ID,               // Link to parent
+		IssueNumber:     parentTask.IssueNumber,         // Inherit
+		RepoOwner:       parentTask.RepoOwner,           // Inherit
+		RepoName:        parentTask.RepoName,            // Inherit
+		Complexity:      parentTask.Complexity,          // Inherit
+		Tier:            parentTask.Tier,                // Inherit
+		BranchName:      parentTask.BranchName,          // Inherit - same branch!
+		PRNumber:        parentTask.PRNumber,            // Inherit - same PR!
+		ParentTaskID:    parentTask.ID,                  // Link to parent
 		ReviewIteration: parentTask.ReviewIteration + 1, // Increment
 		ReviewFeedback:  "Fix error handling",
 		ReviewCommentID: 789,

@@ -26,11 +26,11 @@ type PullRequest struct {
 	Merged     bool   `json:"merged"`
 	Title      string `json:"title"`
 	HeadSHA    string `json:"head_sha"`
-	HeadBranch string `json:"head_ref"`   // Branch name (e.g., "feature/KAI-6-final-review")
-	Body       string `json:"body"`       // PR description
-	Draft      bool   `json:"draft"`      // Whether PR is draft
-	Additions  int    `json:"additions"`  // Lines added
-	Deletions  int    `json:"deletions"`  // Lines deleted
+	HeadBranch string `json:"head_ref"`  // Branch name (e.g., "feature/KAI-6-final-review")
+	Body       string `json:"body"`      // PR description
+	Draft      bool   `json:"draft"`     // Whether PR is draft
+	Additions  int    `json:"additions"` // Lines added
+	Deletions  int    `json:"deletions"` // Lines deleted
 }
 
 // PRComment represents a comment on a pull request.
@@ -149,11 +149,12 @@ func (c *GitHubRESTClient) listIssues(ctx context.Context, params map[string]int
 
 	// Add query params
 	q := req.URL.Query()
-	if state == "OPEN" {
+	switch state {
+	case "OPEN":
 		q.Add("state", "open")
-	} else if state == "CLOSED" {
+	case "CLOSED":
 		q.Add("state", "closed")
-	} else {
+	default:
 		q.Add("state", "all")
 	}
 	q.Add("per_page", "100")
@@ -169,7 +170,7 @@ func (c *GitHubRESTClient) listIssues(ctx context.Context, params map[string]int
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -223,7 +224,7 @@ func (c *GitHubRESTClient) getIssue(ctx context.Context, params map[string]inter
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -281,7 +282,7 @@ func (c *GitHubRESTClient) searchPullRequests(ctx context.Context, params map[st
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -379,7 +380,7 @@ func (c *GitHubRESTClient) GetPullRequest(ctx context.Context, owner, repo strin
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -442,7 +443,7 @@ func (c *GitHubRESTClient) ListOpenPRs(ctx context.Context, owner, repo string) 
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -529,7 +530,7 @@ func (c *GitHubRESTClient) ListPRComments(ctx context.Context, owner, repo strin
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)

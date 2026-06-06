@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -66,6 +67,40 @@ func (m *mockQueue) Release(ctx context.Context, taskID string) error {
 		return nil
 	}
 	return fmt.Errorf("task not found: %s", taskID)
+}
+
+// mockWorkspaceMgr is a mock implementation of workspaceProvider for hermetic tests.
+type mockWorkspaceMgr struct {
+	dir            string
+	prepareFunc    func(ctx context.Context, task *taskqueue.Task) (string, error)
+	prepareFixFunc func(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+func newMockWorkspaceMgr(dir string) *mockWorkspaceMgr {
+	return &mockWorkspaceMgr{dir: dir}
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFunc != nil {
+		return m.prepareFunc(ctx, task)
+	}
+	return m.dir, nil
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspaceForFix(ctx context.Context, task *taskqueue.Task) (string, error) {
+	if m.prepareFixFunc != nil {
+		return m.prepareFixFunc(ctx, task)
+	}
+	return m.dir, nil
+}
+
+// mockQualityGate is a mock implementation of qualityValidator for hermetic tests.
+type mockQualityGate struct {
+	validateErr error
+}
+
+func (m *mockQualityGate) Validate(ctx context.Context, ruleset *conventions.Ruleset) error {
+	return m.validateErr
 }
 
 // mockBackend is a mock implementation of LLMBackend for testing.
@@ -293,6 +328,9 @@ func TestExecute(t *testing.T) {
 			backend.executeFunc = tt.executeFunc
 
 			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			// Inject hermetic test doubles — no real git or test/lint commands are run.
+			worker.workspaceMgr = newMockWorkspaceMgr("/tmp/test-workspace")
+			worker.gateFactory = func(dir string) qualityValidator { return &mockQualityGate{} }
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
@@ -586,7 +624,7 @@ type testRuleset struct {
 }
 
 // buildPromptForTest is a test helper that builds a prompt with a simple ruleset.
-func buildPromptForTest(w *ClaudeCodeWorker, task *taskqueue.Task, ruleset *testRuleset) string {
+func buildPromptForTest(_ *ClaudeCodeWorker, task *taskqueue.Task, ruleset *testRuleset) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")
