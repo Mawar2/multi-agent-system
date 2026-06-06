@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build \
+            -ldflags "-X main.version=${{ github.ref_name }}" \
+            -o "bin/supervisor-${{ matrix.goos }}-${{ matrix.goarch }}" \
+            ./cmd/supervisor
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/supervisor-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: bin/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/**/*
+          generate_release_notes: true
+
+  deploy-production:
+    name: Deploy to Production
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download linux/amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: supervisor-linux-amd64
+
+      - name: Deploy via SSH
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          echo "$PROD_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            supervisor-linux-amd64 "$PROD_USER@$PROD_HOST:/usr/local/bin/supervisor"
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            "$PROD_USER@$PROD_HOST" \
+            "sudo systemctl restart supervisor"
+          rm /tmp/deploy_key
