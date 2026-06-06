@@ -1,0 +1,9 @@
+tasks/
+projects/
+.git/
+docs/
+orchestrator.yml
+*.log
+bin/
+*.exe
+supervisor.exe
