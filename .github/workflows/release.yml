@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -race -cover ./...
+
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build \
+            -ldflags "-X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }}" \
+            -o bin/supervisor-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd/supervisor
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/supervisor-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: bin/
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*
+          generate_release_notes: true
+
+  deploy:
+    name: Deploy to Production
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download linux/amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: supervisor-linux-amd64
+          path: bin/
+
+      - name: Deploy to production via SSH
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          echo "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            bin/supervisor-linux-amd64 \
+            "${PROD_USER}@${PROD_HOST}:/opt/supervisor/supervisor.new"
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            "${PROD_USER}@${PROD_HOST}" \
+            "mv /opt/supervisor/supervisor.new /opt/supervisor/supervisor && \
+             sudo systemctl restart supervisor"
+          rm -f /tmp/deploy_key
