@@ -1,0 +1,109 @@
+name: Release to Production
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -race -cover ./...
+
+  build:
+    name: Build Release Binaries
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build multi-platform binaries
+        run: |
+          VERSION=${{ github.ref_name }}
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          GOOS=linux  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o bin/supervisor-linux-amd64   ./cmd/supervisor
+          GOOS=linux  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o bin/supervisor-linux-arm64   ./cmd/supervisor
+          GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o bin/supervisor-darwin-amd64  ./cmd/supervisor
+          GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o bin/supervisor-darwin-arm64  ./cmd/supervisor
+
+      - name: Copy example config
+        run: cp orchestrator.example.yml bin/orchestrator.example.yml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: bin/
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: bin/
+
+      - name: Create GitHub release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  deploy-production:
+    name: Deploy to Production
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: bin/
+
+      - name: Deploy supervisor to production
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          echo "$PROD_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          chmod +x bin/supervisor-linux-amd64
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            bin/supervisor-linux-amd64 "$PROD_USER@$PROD_HOST:/opt/multi-agent-system/supervisor.new"
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "$PROD_USER@$PROD_HOST" \
+            "mv /opt/multi-agent-system/supervisor.new /opt/multi-agent-system/supervisor && sudo systemctl restart multi-agent-system"
+          rm /tmp/deploy_key
+
+      - name: Verify production deployment
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          echo "$PROD_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no "$PROD_USER@$PROD_HOST" \
+            "sudo systemctl is-active multi-agent-system"
+          rm /tmp/deploy_key
