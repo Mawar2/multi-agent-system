@@ -1,0 +1,44 @@
+version: '3.9'
+
+# Named volumes keep task queue and workspaces across container restarts.
+volumes:
+  tasks:
+  workspaces:
+
+services:
+  supervisor:
+    build: .
+    entrypoint: ["/supervisor", "--config", "/app/orchestrator.yml"]
+    volumes:
+      - tasks:/app/tasks
+      - workspaces:/app/projects
+      - ./orchestrator.yml:/app/orchestrator.yml:ro
+    environment:
+      - GITHUB_TOKEN
+    working_dir: /app
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # hunter is gated behind the "hunt" profile so it doesn't start by default.
+  # Start it explicitly: docker compose --profile hunt up -d
+  hunter:
+    build: .
+    entrypoint: ["/hunter"]
+    volumes:
+      - tasks:/app/tasks
+    environment:
+      - GITHUB_TOKEN
+      - SAM_API_KEY
+    working_dir: /app
+    profiles:
+      - hunt
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -417,10 +417,10 @@ func (s *Supervisor) createFixTask(ctx context.Context, parentTask *taskqueue.Ta
 		Title:           fmt.Sprintf("Fix AI review feedback - %s", parentTask.Title),
 		Description:     feedback,
 		Complexity:      parentTask.Complexity, // Inherit complexity
-		Tier:            parentTask.Tier,        // Inherit tier
+		Tier:            parentTask.Tier,       // Inherit tier
 		Status:          taskqueue.StatusPending,
-		BranchName:      parentTask.BranchName,  // Reuse existing branch!
-		PRNumber:        parentTask.PRNumber,    // Update existing PR!
+		BranchName:      parentTask.BranchName, // Reuse existing branch!
+		PRNumber:        parentTask.PRNumber,   // Update existing PR!
 		ParentTaskID:    parentTask.ID,
 		ReviewIteration: parentTask.ReviewIteration + 1,
 		ReviewFeedback:  comment.Body,

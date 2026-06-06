@@ -1,0 +1,8 @@
+tasks/
+projects/
+.git/
+docs/
+orchestrator.yml
+bin/
+*.exe
+*.test

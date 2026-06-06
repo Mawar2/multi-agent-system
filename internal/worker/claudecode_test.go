@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -66,6 +67,29 @@ func (m *mockQueue) Release(ctx context.Context, taskID string) error {
 		return nil
 	}
 	return fmt.Errorf("task not found: %s", taskID)
+}
+
+// mockWorkspaceMgr is a mock workspaceProvider for hermetic testing.
+type mockWorkspaceMgr struct {
+	dir string
+	err error
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspace(_ context.Context, _ *taskqueue.Task) (string, error) {
+	return m.dir, m.err
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspaceForFix(_ context.Context, _ *taskqueue.Task) (string, error) {
+	return m.dir, m.err
+}
+
+// mockQualityGate is a mock qualityValidator for hermetic testing.
+type mockQualityGate struct {
+	err error
+}
+
+func (m *mockQualityGate) Validate(_ context.Context, _ *conventions.Ruleset) error {
+	return m.err
 }
 
 // mockBackend is a mock implementation of LLMBackend for testing.
@@ -293,6 +317,9 @@ func TestExecute(t *testing.T) {
 			backend.executeFunc = tt.executeFunc
 
 			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			// Inject hermetic seams: no real git or filesystem calls.
+			worker.workspaceMgr = &mockWorkspaceMgr{dir: "/tmp/fake-workspace"}
+			worker.newQualityGate = func(_ string) qualityValidator { return &mockQualityGate{} }
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
