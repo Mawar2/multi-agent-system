@@ -9,6 +9,14 @@ projects:
     branch_pattern: "feature/KAI-{ticket}-{summary}"
     commit_pattern: "{ticket}_{description}"
     labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
+    issue_filter:
+      # skip_if_has_pr: true   # Default true — skip issues that already have a PR.
+      #                          Set to false to allow re-work of issues with open PRs.
+      # skip_labels:            # Issues carrying any of these labels are ignored.
+      #   - needs-human-design  # (case-insensitive)
+      #   - blocked
+      # require_acceptance_criteria: false  # Default false. Set to true to skip issues
+      #                                       that have no "- [ ]" checklist items.
 
   # Add more projects as needed
   # - name: other-project
