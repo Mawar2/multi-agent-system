@@ -1,0 +1,76 @@
+name: Staging Deploy
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -race -cover ./...
+
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build linux/amd64 binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -o bin/supervisor ./cmd/supervisor
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-linux-amd64
+          path: bin/supervisor
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: supervisor-linux-amd64
+          path: bin/
+
+      - name: Deploy to staging via SSH
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+        run: |
+          echo "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            bin/supervisor \
+            "${STAGING_USER}@${STAGING_HOST}:/opt/supervisor/supervisor.new"
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            "${STAGING_USER}@${STAGING_HOST}" \
+            "mv /opt/supervisor/supervisor.new /opt/supervisor/supervisor && \
+             sudo systemctl restart supervisor"
+          rm -f /tmp/deploy_key
