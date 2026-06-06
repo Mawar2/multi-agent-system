@@ -22,15 +22,52 @@ type Config struct {
 	TaskQueueDir        string `yaml:"task_queue_dir"`        // Directory for JSON queue (default: ./tasks)
 }
 
+// IssueFilterConfig controls which issues the supervisor will auto-work.
+// All filters are opt-in; omitting them preserves the previous behaviour.
+type IssueFilterConfig struct {
+	// SkipIfHasPR skips issues that already have an associated PR.
+	// Defaults to true when nil (preserves legacy behaviour).
+	SkipIfHasPR *bool `yaml:"skip_if_has_pr,omitempty"`
+
+	// SkipLabels lists labels that make an issue ineligible.
+	// Matching is case-insensitive. Any single matching label causes the skip.
+	SkipLabels []string `yaml:"skip_labels,omitempty"`
+
+	// RequireAcceptanceCriteria skips issues that have no "- [ ]" checklist items.
+	// Defaults to false.
+	RequireAcceptanceCriteria bool `yaml:"require_acceptance_criteria"`
+}
+
+// shouldSkipIfHasPR returns true unless SkipIfHasPR is explicitly set to false.
+func (f IssueFilterConfig) shouldSkipIfHasPR() bool {
+	if f.SkipIfHasPR == nil {
+		return true // default: skip issues that already have a PR
+	}
+	return *f.SkipIfHasPR
+}
+
 // ProjectConfig defines a project to monitor.
 type ProjectConfig struct {
-	Name            string   `yaml:"name"`             // Project name (e.g., "kaimi")
-	RepoOwner       string   `yaml:"repo_owner"`       // GitHub owner (e.g., "Mawar2")
-	RepoName        string   `yaml:"repo_name"`        // GitHub repo (e.g., "Kaimi")
-	ConventionsPath string   `yaml:"conventions_path"` // Path to CLAUDE.md (e.g., "./CLAUDE.md")
-	BranchPattern   string   `yaml:"branch_pattern"`   // e.g., "feature/KAI-{ticket}-{summary}"
-	CommitPattern   string   `yaml:"commit_pattern"`   // e.g., "{ticket}_{description}"
-	Labels          []string `yaml:"labels,omitempty"` // Filter issues by labels (optional)
+	Name            string            `yaml:"name"`             // Project name (e.g., "kaimi")
+	RepoOwner       string            `yaml:"repo_owner"`       // GitHub owner (e.g., "Mawar2")
+	RepoName        string            `yaml:"repo_name"`        // GitHub repo (e.g., "Kaimi")
+	ConventionsPath string            `yaml:"conventions_path"` // Path to CLAUDE.md (e.g., "./CLAUDE.md")
+	BranchPattern   string            `yaml:"branch_pattern"`   // e.g., "feature/KAI-{ticket}-{summary}"
+	CommitPattern   string            `yaml:"commit_pattern"`   // e.g., "{ticket}_{description}"
+	Labels          []string          `yaml:"labels,omitempty"` // Filter issues by labels (optional)
+	IssueFilter     IssueFilterConfig `yaml:"issue_filter"`     // Smart filtering options (optional)
+}
+
+// IssueFilterForRepo returns the IssueFilterConfig for the given repository.
+// If no matching project is found, safe defaults are returned (skip_if_has_pr: true,
+// skip_labels: none, require_acceptance_criteria: false).
+func (c *Config) IssueFilterForRepo(owner, repo string) IssueFilterConfig {
+	for _, project := range c.Projects {
+		if project.RepoOwner == owner && project.RepoName == repo {
+			return project.IssueFilter
+		}
+	}
+	return IssueFilterConfig{} // zero value: SkipIfHasPR nil → true, rest false/nil
 }
 
 // WorkerTierConfig defines worker pool settings.
