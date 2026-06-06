@@ -279,8 +279,13 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 	// Original issue task prompt
 	var sb strings.Builder
 
+	// Lead with a ticket identifier as the first line so that downstream
+	// conversation records/titles are findable by repo+issue (the Antigravity
+	// bridge derives its conversation label/index from this first line).
+	fmt.Fprintf(&sb, "%s/%s#%d: %s\n\n", task.RepoOwner, task.RepoName, task.IssueNumber, task.Title)
+
 	// Header
-	sb.WriteString("You are an autonomous code agent implementing a GitHub Issue.\n\n")
+	sb.WriteString("You are an autonomous code agent implementing this GitHub issue.\n\n")
 
 	// Task details
 	sb.WriteString("## TASK DETAILS\n\n")
@@ -380,6 +385,12 @@ func (w *ClaudeCodeWorker) buildPrompt(task *taskqueue.Task, ruleset *convention
 // This is used for pr_feedback tasks that address issues found by the AI reviewer.
 func (w *ClaudeCodeWorker) buildFixPrompt(task *taskqueue.Task, ruleset *conventions.Ruleset) string {
 	var sb strings.Builder
+
+	// Lead with a branch/PR identifier as the first line so the conversation
+	// record is findable by branch/PR (the Antigravity bridge labels/indexes the
+	// conversation from this first line).
+	fmt.Fprintf(&sb, "%s/%s PR#%d fix (%s, review iteration %d)\n\n",
+		task.RepoOwner, task.RepoName, task.PRNumber, task.BranchName, task.ReviewIteration)
 
 	// Header
 	sb.WriteString("You are an autonomous code agent fixing AI code review feedback.\n\n")

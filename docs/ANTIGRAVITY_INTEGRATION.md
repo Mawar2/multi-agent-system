@@ -134,6 +134,25 @@ response
 When checking the bridge server's log output, you should see:
 ```
 Received prompt request: model=flash, prompt_length=12
-Created conversation <uuid>. Waiting for model response...
+Created conversation <uuid> [<label>]. Waiting for model response...
 Success: response_length=15
 ```
+
+## Finding conversations later (labels & index)
+
+Antigravity auto-titles conversations by summarizing the prompt, so many runs
+otherwise show up as a generic title like "Implementing GitHub Issue." To make
+records findable:
+
+- **Workers lead the prompt with an identifier.** The first line is
+  `owner/repo#<issue>: <title>` for issue tasks and
+  `owner/repo PR#<n> fix (<branch>, review iteration <i>)` for fix tasks. This
+  becomes the conversation's first user message, so Antigravity's auto-title
+  reflects the ticket/branch.
+- **The bridge writes a durable index.** For every conversation it creates, the
+  bridge appends `timestamp <TAB> label <TAB> model <TAB> conversationId` to
+  `~/.gemini/antigravity/brain/conversation_index.log` (override with
+  `ANTIGRAVITY_CONVERSATION_INDEX`). The `label` is taken from the optional
+  `label` field of the `/prompt` request, or the prompt's first line. Use this
+  file to map a ticket/branch to its `conversationId`, then open
+  `~/.gemini/antigravity/brain/<conversationId>/.system_generated/logs/transcript.jsonl`.

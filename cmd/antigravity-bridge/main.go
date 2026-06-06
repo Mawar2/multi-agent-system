@@ -16,7 +16,8 @@ import (
 // PromptRequest is the JSON body for /prompt endpoint
 type PromptRequest struct {
 	Prompt string `json:"prompt"`
-	Model  string `json:"model"` // "flash", "flash_lite", or "pro"
+	Model  string `json:"model"`           // "flash", "flash_lite", or "pro"
+	Label  string `json:"label,omitempty"` // optional human label (ticket/branch) for the conversation index
 }
 
 // PromptResponse is the JSON response from /prompt endpoint
@@ -172,7 +173,7 @@ func (b *AntigravityBridge) handlePrompt(w http.ResponseWriter, r *http.Request)
 	log.Printf("Received prompt request: model=%s, prompt_length=%d", req.Model, len(req.Prompt))
 
 	// Call agentapi.bat
-	response, err := b.callAgentAPI(req.Prompt, req.Model)
+	response, err := b.callAgentAPI(req.Prompt, req.Model, req.Label)
 
 	// Build response
 	resp := PromptResponse{
@@ -189,7 +190,14 @@ func (b *AntigravityBridge) handlePrompt(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (b *AntigravityBridge) callAgentAPI(prompt, model string) (string, error) {
+func (b *AntigravityBridge) callAgentAPI(prompt, model, label string) (string, error) {
+	// A human-readable label (ticket/branch) makes the created conversation
+	// findable later. Prefer an explicit label; otherwise use the prompt's first
+	// non-empty line (workers lead the prompt with the repo#issue or PR/branch).
+	if strings.TrimSpace(label) == "" {
+		label = firstPromptLine(prompt)
+	}
+
 	// Build command: agentapi.bat new-conversation --model=<model> "<prompt>"
 	cmd := exec.Command(b.agentAPIPath, "new-conversation", fmt.Sprintf("--model=%s", model), prompt)
 
@@ -236,7 +244,8 @@ func (b *AntigravityBridge) callAgentAPI(prompt, model string) (string, error) {
 		return "", fmt.Errorf("no conversation ID returned by agentapi\nJSON: %s", jsonStr)
 	}
 
-	log.Printf("Created conversation %s. Waiting for model response...", convID)
+	log.Printf("Created conversation %s [%s]. Waiting for model response...", convID, label)
+	recordConversation(label, model, convID)
 
 	// Construct path to transcript.jsonl
 	homeDir := os.Getenv("USERPROFILE")
@@ -323,6 +332,49 @@ func (b *AntigravityBridge) callAgentAPI(prompt, model string) (string, error) {
 	}
 
 	return finalResponse, nil
+}
+
+// firstPromptLine returns the first non-empty line of the prompt (trimmed and
+// capped), used as the conversation label when none is supplied explicitly.
+func firstPromptLine(prompt string) string {
+	for _, ln := range strings.Split(prompt, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if len(ln) > 100 {
+			ln = ln[:100]
+		}
+		return ln
+	}
+	return "(untitled)"
+}
+
+// recordConversation appends a label -> conversationId mapping to a durable
+// index file so conversations can be found later by ticket/branch regardless of
+// how Antigravity titles them in its UI. Best-effort: failures are ignored.
+// Override the location with ANTIGRAVITY_CONVERSATION_INDEX.
+func recordConversation(label, model, convID string) {
+	indexPath := os.Getenv("ANTIGRAVITY_CONVERSATION_INDEX")
+	if indexPath == "" {
+		home := os.Getenv("USERPROFILE")
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		indexPath = filepath.Join(home, ".gemini", "antigravity", "brain", "conversation_index.log")
+	}
+
+	f, err := os.OpenFile(indexPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("Warning: could not write conversation index %s: %v", indexPath, err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	// timestamp \t label \t model \t conversationId
+	if _, err := fmt.Fprintf(f, "%s\t%s\t%s\t%s\n", time.Now().Format(time.RFC3339), label, model, convID); err != nil {
+		log.Printf("Warning: could not append to conversation index: %v", err)
+	}
 }
 
 // loadAntigravityEnv checks the current and parent directories for .env.antigravity
