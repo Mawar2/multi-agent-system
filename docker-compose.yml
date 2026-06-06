@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mawar2/multi-agent-system:latest
+    container_name: multi-agent-supervisor
+
+    environment:
+      # Required: GitHub personal access token with repo + read:org scopes
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # Optional: override Claude permission mode (default: dangerouslySkipPermissions)
+      CLAUDE_PERMISSION_MODE: ${CLAUDE_PERMISSION_MODE:-dangerouslySkipPermissions}
+
+    volumes:
+      # Mount your local orchestrator.yml into the container
+      - ./orchestrator.yml:/app/orchestrator.yml:ro
+      # Persist task queue across restarts
+      - tasks:/app/tasks
+      # Persist cloned workspaces across restarts (large; mount host path if preferred)
+      - projects:/app/projects
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["/app/supervisor", "--help"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  hunter:
+    image: mawar2/multi-agent-system:latest
+    container_name: multi-agent-hunter
+    entrypoint: ["/app/hunter"]
+    command: ["--config", "/app/hunter.yml"]
+
+    environment:
+      # Required: SAM.gov API key (register free at https://sam.gov/profile/details)
+      SAM_API_KEY: ${SAM_API_KEY}
+      # Required: GitHub PAT with repo scope (to file issues in tracking repo)
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+
+    volumes:
+      # Mount your hunter.yml into the container
+      - ./hunter.yml:/app/hunter.yml:ro
+
+    restart: unless-stopped
+
+    depends_on:
+      - supervisor
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tasks:
+    driver: local
+  projects:
+    driver: local

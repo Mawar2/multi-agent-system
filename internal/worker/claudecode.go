@@ -12,6 +12,20 @@ import (
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
+// workspaceProvider is the injectable seam for workspace management (hermetic tests inject a fake).
+type workspaceProvider interface {
+	PrepareWorkspace(ctx context.Context, task *taskqueue.Task) (string, error)
+}
+
+// qualityValidator is the injectable seam for quality-gate checks (hermetic tests inject a fake).
+type qualityValidator interface {
+	Validate(ctx context.Context, ruleset *conventions.Ruleset) error
+}
+
+// qualityGateFactory creates a qualityValidator for a given workspace directory.
+// Defaults to NewQualityGates; tests replace it with a factory that returns a fake.
+type qualityGateFactory func(workspaceDir string) qualityValidator
+
 // ClaudeCodeWorker is a worker implementation that uses Claude Code CLI to complete tasks.
 // It claims tasks from the queue, parses project conventions, and uses the LLM backend
 // to implement solutions following project rules.
@@ -19,15 +33,16 @@ import (
 // Phase 1: Uses Claude Code CLI as the backend (local, free)
 // Phase 2+: Can use other backends (Antigravity, Vertex AI) via LLMBackend abstraction
 type ClaudeCodeWorker struct {
-	id              string               // Unique worker identifier
-	tier            taskqueue.Tier       // Worker tier (determines which tasks to claim)
-	queue           taskqueue.TaskQueue  // Queue to claim tasks from
-	backend         llm.LLMBackend       // LLM backend for code generation
-	workspaceRoot   string               // Root directory for isolated workspaces
-	workspaceMgr    *WorkspaceManager    // Manages cloning and updating target repos
-	tasksCompleted  int                  // Number of tasks successfully completed
-	tasksFailed     int                  // Number of tasks failed
-	mu              sync.Mutex           // Protects stats (tasksCompleted, tasksFailed)
+	id              string              // Unique worker identifier
+	tier            taskqueue.Tier      // Worker tier (determines which tasks to claim)
+	queue           taskqueue.TaskQueue // Queue to claim tasks from
+	backend         llm.LLMBackend      // LLM backend for code generation
+	workspaceRoot   string              // Root directory for isolated workspaces
+	workspaceMgr    workspaceProvider   // Manages cloning and updating target repos
+	newQualityGates qualityGateFactory  // Factory for quality gate validators
+	tasksCompleted  int                 // Number of tasks successfully completed
+	tasksFailed     int                 // Number of tasks failed
+	mu              sync.Mutex          // Protects stats (tasksCompleted, tasksFailed)
 }
 
 // NewClaudeCodeWorker creates a new ClaudeCodeWorker instance.
@@ -54,8 +69,9 @@ func NewClaudeCodeWorker(
 		backend:       backend,
 		workspaceRoot: workspaceRoot,
 		workspaceMgr:  NewWorkspaceManager(workspaceRoot),
-		tasksCompleted: 0,
-		tasksFailed:    0,
+		newQualityGates: func(dir string) qualityValidator {
+			return NewQualityGates(dir)
+		},
 	}
 }
 
@@ -141,7 +157,7 @@ func (w *ClaudeCodeWorker) Execute(ctx context.Context, task *taskqueue.Task) (*
 	// Step 6: Run quality gates BEFORE accepting PR
 	// This prevents low-quality PRs that would fail AI review and waste costs
 	fmt.Printf("[Worker %s] Running quality gates before accepting PR...\n", w.id)
-	gates := NewQualityGates(workspaceDir)
+	gates := w.newQualityGates(workspaceDir)
 	if err := gates.Validate(ctx, ruleset); err != nil {
 		// Quality checks failed - reject the work, do not create/accept PR
 		return w.failResult(task, fmt.Errorf("quality gates failed: %w", err)), nil

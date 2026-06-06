@@ -1,0 +1,107 @@
+# Hunter Agent Configuration
+# Copy this to hunter.yml and customize for your BD pipeline.
+#
+# Environment variables override the values here:
+#   SAM_API_KEY    — SAM.gov API key (register free at https://sam.gov/profile/details)
+#   GITHUB_TOKEN   — GitHub PAT with repo scope (to create issues in tracking_repo_*)
+
+sam_api_key: ""          # or set SAM_API_KEY env var
+github_token: ""         # or set GITHUB_TOKEN env var
+
+# GitHub repo where opportunity issues are filed (e.g. your BD tracker)
+tracking_repo_owner: Mawar2
+tracking_repo_name: bd-tracker
+
+# How often to poll SAM.gov (minutes). Default: 60.
+poll_interval_minutes: 60
+
+# How many days back to look for newly posted opportunities. Default: 1.
+lookback_days: 1
+
+search:
+  # Free-text keywords — joined with OR in the SAM.gov API query.
+  # Tip: start broad, then tighten scoring's must_keywords to filter noise.
+  keywords:
+    - software
+    - cloud
+    - AI
+    - data analytics
+    - IT services
+    - cybersecurity
+    - DevOps
+
+  # NAICS codes to include (leave empty for all NAICS).
+  # Common IT/software codes:
+  #   541511 — Custom Computer Programming Services
+  #   541512 — Computer Systems Design Services
+  #   541513 — Computer Facilities Management Services
+  #   541519 — Other Computer Related Services
+  #   518210 — Data Processing, Hosting
+  naics_codes:
+    - "541511"
+    - "541512"
+    - "541513"
+    - "541519"
+    - "518210"
+
+  # Notice types to fetch (leave empty for all active types).
+  # "o" = Solicitation, "p" = Presolicitation, "r" = Sources Sought, "s" = Special Notice
+  types:
+    - "o"
+    - "p"
+    - "r"
+
+scoring:
+  # Gate: opportunity must match at least one of these (case-insensitive substring).
+  # An empty list disables the gate (all opportunities pass).
+  must_keywords:
+    - software
+    - cloud
+    - data
+    - AI
+    - artificial intelligence
+    - machine learning
+    - analytics
+    - platform
+    - digital
+    - IT services
+    - information technology
+    - DevOps
+    - agile
+    - API
+    - microservices
+    - cybersecurity
+    - security
+    - SaaS
+
+  # Each boost keyword match adds boost_weight to the score.
+  boost_keywords:
+    - AI
+    - artificial intelligence
+    - machine learning
+    - cloud-native
+    - DevSecOps
+    - zero trust
+    - modernization
+    - automation
+  boost_weight: 10
+
+  # NAICS codes that add naics_weight to the score.
+  prefer_naics:
+    - "541511"
+    - "541512"
+    - "541513"
+    - "541519"
+    - "518210"
+    - "334111"
+  naics_weight: 15
+
+  # Opportunities with fewer than deadline_urgency_days remaining get urgency_weight added.
+  deadline_urgency_days: 14
+  urgency_weight: 5
+
+  # Bonus for small-business set-aside opportunities.
+  small_biz_weight: 8
+
+  # Opportunities with score below this threshold are silently dropped.
+  min_score: 1

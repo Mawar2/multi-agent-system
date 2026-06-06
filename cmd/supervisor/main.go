@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/hunter"
 	"github.com/Mawar2/multi-agent-system/internal/llm"
 	"github.com/Mawar2/multi-agent-system/internal/orchestrator"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -85,6 +86,16 @@ func main() {
 	}
 	fmt.Println("\nSupervisor running. Press Ctrl+C to stop.")
 
+	// Start Hunter (opt-in: only when SAM_API_KEY is set)
+	if hCfg := loadHunterConfig(); hCfg != nil {
+		h := hunter.New(*hCfg)
+		go h.Run(ctx)
+		fmt.Printf("[Hunter] Started — tracking repo: %s/%s\n",
+			hCfg.TrackingRepoOwner, hCfg.TrackingRepoName)
+	} else {
+		fmt.Println("[Hunter] Disabled (set SAM_API_KEY to enable)")
+	}
+
 	// Start workers
 	for _, w := range workers {
 		go runWorker(ctx, w)
@@ -152,6 +163,29 @@ func initializeWorkers(config *orchestrator.Config, queue taskqueue.TaskQueue) [
 	}
 
 	return workers
+}
+
+// loadHunterConfig reads Hunter configuration from environment variables.
+// Returns nil if SAM_API_KEY is not set, disabling the Hunter.
+func loadHunterConfig() *hunter.Config {
+	samKey := os.Getenv("SAM_API_KEY")
+	if samKey == "" {
+		return nil
+	}
+	owner := os.Getenv("HUNTER_TRACKING_REPO_OWNER")
+	if owner == "" {
+		owner = "Mawar2"
+	}
+	name := os.Getenv("HUNTER_TRACKING_REPO_NAME")
+	if name == "" {
+		name = "bd-tracker"
+	}
+	return &hunter.Config{
+		SAMAPIKey:         samKey,
+		GitHubToken:       os.Getenv("GITHUB_TOKEN"),
+		TrackingRepoOwner: owner,
+		TrackingRepoName:  name,
+	}
 }
 
 // runWorker runs a single worker in a loop.

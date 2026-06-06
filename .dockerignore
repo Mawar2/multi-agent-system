@@ -1,0 +1,26 @@
+# Build artifacts
+bin/
+*.exe
+
+# Runtime data (not needed in image)
+tasks/
+projects/
+workspaces/
+
+# User-specific config (mounted at runtime via volume)
+orchestrator.yml
+
+# Documentation
+docs/
+*.md
+!orchestrator.example.yml
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore

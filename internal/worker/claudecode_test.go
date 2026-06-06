@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
 
@@ -68,6 +69,43 @@ func (m *mockQueue) Release(ctx context.Context, taskID string) error {
 	return fmt.Errorf("task not found: %s", taskID)
 }
 
+// mockWorkspace is a fake workspaceProvider — never touches the filesystem or git.
+type mockWorkspace struct {
+	dir string
+	err error
+}
+
+func (m *mockWorkspace) PrepareWorkspace(_ context.Context, _ *taskqueue.Task) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.dir, nil
+}
+
+// mockQualityGate is a fake qualityValidator — always passes unless configured to fail.
+type mockQualityGate struct {
+	err error
+}
+
+func (m *mockQualityGate) Validate(_ context.Context, _ *conventions.Ruleset) error {
+	return m.err
+}
+
+// newHermeticWorker builds a ClaudeCodeWorker with fake workspace + quality-gate seams.
+func newHermeticWorker(
+	id string,
+	queue taskqueue.TaskQueue,
+	backend *mockBackend,
+	workspaceDir string,
+	workspaceErr error,
+	qualityErr error,
+) *ClaudeCodeWorker {
+	w := NewClaudeCodeWorker(id, taskqueue.TierClaude, queue, backend, "/tmp/projects")
+	w.workspaceMgr = &mockWorkspace{dir: workspaceDir, err: workspaceErr}
+	w.newQualityGates = func(_ string) qualityValidator { return &mockQualityGate{err: qualityErr} }
+	return w
+}
+
 // mockBackend is a mock implementation of LLMBackend for testing.
 type mockBackend struct {
 	executeFunc func(ctx context.Context, prompt string, model string) (string, error)
@@ -83,6 +121,13 @@ func newMockBackend(name string, models []string) *mockBackend {
 }
 
 func (m *mockBackend) Execute(ctx context.Context, prompt string, model string) (string, error) {
+	if m.executeFunc != nil {
+		return m.executeFunc(ctx, prompt, model)
+	}
+	return "", fmt.Errorf("not implemented")
+}
+
+func (m *mockBackend) ExecuteInDir(ctx context.Context, prompt string, model string, workDir string) (string, error) {
 	if m.executeFunc != nil {
 		return m.executeFunc(ctx, prompt, model)
 	}
@@ -287,7 +332,7 @@ func TestExecute(t *testing.T) {
 			backend := newMockBackend("test-backend", []string{"test-model"})
 			backend.executeFunc = tt.executeFunc
 
-			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			worker := newHermeticWorker("worker-1", queue, backend, "/tmp/projects/workspace", nil, nil)
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
