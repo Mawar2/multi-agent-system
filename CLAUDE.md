@@ -38,15 +38,14 @@ The **Multi-Agent Orchestration System** is a production infrastructure system t
 **IMPORTANT:** The GitHub token is stored in the user's PowerShell profile.
 
 **Location:** `$PROFILE` (PowerShell profile)
-**Token:** `***REMOVED-GITHUB-TOKEN***`
 
 **To use:**
 ```powershell
-# PowerShell
+# PowerShell - read token from profile
 $env:GITHUB_TOKEN = (cat $PROFILE | Select-String "ghp_").Matches.Value
 
-# Or just set it directly
-$env:GITHUB_TOKEN = "***REMOVED-GITHUB-TOKEN***"
+# Or set from environment if already configured
+# Token should have repo and read:org permissions
 ```
 
 **Required permissions:**
@@ -400,7 +399,8 @@ worker_tiers:
 
 1. **Set GITHUB_TOKEN:**
    ```powershell
-   $env:GITHUB_TOKEN = "***REMOVED-GITHUB-TOKEN***"
+   # Read from PowerShell profile where token is stored
+   $env:GITHUB_TOKEN = (cat $PROFILE | Select-String "ghp_").Matches.Value
    ```
 
 2. **Build supervisor:**
