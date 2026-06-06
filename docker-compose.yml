@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  supervisor:
+    build: .
+    image: multi-agent-system:latest
+    restart: unless-stopped
+    volumes:
+      - tasks:/app/tasks
+      - workspaces:/app/projects
+      - ./orchestrator.yml:/orchestrator.yml:ro
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: ["--config", "/orchestrator.yml"]
+
+  hunter:
+    image: multi-agent-system:latest
+    entrypoint: ["/hunter"]
+    profiles:
+      - hunt
+    volumes:
+      - tasks:/app/tasks
+    environment:
+      - SAM_API_KEY=${SAM_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tasks:
+  workspaces:

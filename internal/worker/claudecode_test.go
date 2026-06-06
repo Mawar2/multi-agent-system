@@ -7,8 +7,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mawar2/multi-agent-system/internal/conventions"
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
 )
+
+// mockWorkspaceMgr is a fake workspaceProvider that avoids real git operations.
+type mockWorkspaceMgr struct {
+	dir string // directory returned by both Prepare methods
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspace(_ context.Context, _ *taskqueue.Task) (string, error) {
+	if m.dir == "" {
+		return "/tmp/test-workspace", nil
+	}
+	return m.dir, nil
+}
+
+func (m *mockWorkspaceMgr) PrepareWorkspaceForFix(_ context.Context, _ *taskqueue.Task) (string, error) {
+	if m.dir == "" {
+		return "/tmp/test-workspace", nil
+	}
+	return m.dir, nil
+}
+
+// mockQualityGate is a no-op qualityValidator for tests.
+type mockQualityGate struct {
+	err error // if non-nil, Validate returns this error
+}
+
+func (m *mockQualityGate) Validate(_ context.Context, _ *conventions.Ruleset) error {
+	return m.err
+}
 
 // mockQueue is a mock implementation of TaskQueue for testing.
 type mockQueue struct {
@@ -293,6 +322,9 @@ func TestExecute(t *testing.T) {
 			backend.executeFunc = tt.executeFunc
 
 			worker := NewClaudeCodeWorker("worker-1", taskqueue.TierClaude, queue, backend, "/tmp/projects")
+			// Inject hermetic fakes so Execute doesn't clone git repos or run shell commands.
+			worker.workspaceMgr = &mockWorkspaceMgr{}
+			worker.gateFactory = func(string) qualityValidator { return &mockQualityGate{} }
 
 			result, err := worker.Execute(context.Background(), tt.task)
 
