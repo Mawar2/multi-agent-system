@@ -10,6 +10,20 @@ projects:
     commit_pattern: "{ticket}_{description}"
     labels: []  # Optional: filter issues by labels (e.g., ["orchestrator:pending"])
 
+    # Smart issue filtering — controls which issues are eligible for auto-working.
+    issue_filter:
+      # Skip issues that already have an associated pull request (default: true).
+      skip_if_has_pr: true
+      # Skip issues that carry any of these labels. Add labels for issues requiring
+      # human design decisions, external dependencies, or other blockers.
+      skip_labels:
+        - needs-human-design
+        - blocked
+        - wontfix
+      # Skip issues that have no acceptance criteria checklist (- [ ] items).
+      # Recommended: true, so workers have clear goals before starting.
+      require_acceptance_criteria: false
+
   # Add more projects as needed
   # - name: other-project
   #   repo_owner: YourOrg
@@ -17,6 +31,10 @@ projects:
   #   conventions_path: ./PROJECT_RULES.md
   #   branch_pattern: "{ticket}-{summary}"
   #   commit_pattern: "[{ticket}] {description}"
+  #   issue_filter:
+  #     skip_if_has_pr: true
+  #     skip_labels: ["needs-human-design"]
+  #     require_acceptance_criteria: true
 
 worker_tiers:
   gemini_flash:

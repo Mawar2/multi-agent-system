@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Mawar2/multi-agent-system/internal/taskqueue"
@@ -139,28 +140,71 @@ func (s *Supervisor) pollIssues(ctx context.Context) error {
 	return nil
 }
 
-// processIssue routes a single issue and enqueues it as a task.
-// Skips issues that already have PRs or are already in the queue.
+// issueFilterForRepo returns the IssueFilterConfig for the given repository,
+// falling back to safe defaults (skip if has PR, no label or AC filters) when
+// no matching project entry is found.
+func (s *Supervisor) issueFilterForRepo(owner, repo string) IssueFilterConfig {
+	for _, project := range s.config.Projects {
+		if project.RepoOwner == owner && project.RepoName == repo {
+			return project.IssueFilter
+		}
+	}
+	t := true
+	return IssueFilterConfig{SkipIfHasPR: &t}
+}
+
+// processIssue applies issue filters and, if the issue passes, enqueues it as a task.
+// Skips issues that: have an existing PR, carry a skip label, lack acceptance criteria
+// (when required), or are already in the queue.
 func (s *Supervisor) processIssue(ctx context.Context, issue *ticket.Issue) error {
 	log.Printf("Supervisor: Processing issue #%d: %s", issue.Number, issue.Title)
 
-	// Check if issue already has a PR
-	prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
-	if err != nil {
-		log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
-		// Continue processing - treat as no PR
-	} else if prStatus != nil {
-		log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
-			issue.Number, prStatus.Number, prStatus.State)
-		return nil
+	issueFilter := s.issueFilterForRepo(issue.RepoOwner, issue.RepoName)
+
+	// Skip issues that carry a configured skip label (cheap, no API call).
+	for _, skipLabel := range issueFilter.SkipLabels {
+		for _, issueLabel := range issue.Labels {
+			if strings.EqualFold(issueLabel, skipLabel) {
+				log.Printf("Supervisor: Skipping issue #%d - has skip label '%s'",
+					issue.Number, skipLabel)
+				return nil
+			}
+		}
+	}
+
+	// Skip issues without acceptance criteria when the filter requires them.
+	if issueFilter.RequireAcceptanceCriteria {
+		criteria, err := s.ticketClient.ParseAcceptanceCriteria(issue.Body)
+		if err != nil {
+			log.Printf("Supervisor: Failed to parse AC for issue #%d: %v - skipping", issue.Number, err)
+			return nil
+		}
+		if len(criteria) == 0 {
+			log.Printf("Supervisor: Skipping issue #%d - missing acceptance criteria", issue.Number)
+			return nil
+		}
+	}
+
+	// Skip issues that already have a PR (default: true).
+	skipIfHasPR := issueFilter.SkipIfHasPR == nil || *issueFilter.SkipIfHasPR
+	if skipIfHasPR {
+		prStatus, err := s.ticketClient.CheckPRStatus(ctx, issue.RepoOwner, issue.RepoName, issue.Number)
+		if err != nil {
+			log.Printf("Supervisor: Failed to check PR status for issue #%d: %v", issue.Number, err)
+			// Continue processing - treat as no PR
+		} else if prStatus != nil {
+			log.Printf("Supervisor: Skipping issue #%d - already has PR #%d (%s)",
+				issue.Number, prStatus.Number, prStatus.State)
+			return nil
+		}
 	}
 
 	// Check if issue is already in the queue
-	filter := &taskqueue.TaskFilter{
+	taskFilter := &taskqueue.TaskFilter{
 		RepoOwner: issue.RepoOwner,
 		RepoName:  issue.RepoName,
 	}
-	existingTasks, err := s.queue.List(ctx, filter)
+	existingTasks, err := s.queue.List(ctx, taskFilter)
 	if err != nil {
 		return fmt.Errorf("failed to list existing tasks: %w", err)
 	}
